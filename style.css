@@ -294,6 +294,7 @@ body::before {
     .container {
         width: 100%;
         padding: 0 10px;
+        margin: 60px auto 70px;  /* 底部增加到70px，给底部导航栏更多空间 */
     }
 }
 
