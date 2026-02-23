@@ -2159,21 +2159,22 @@ body::before {
     }
     
     /* 小屏幕时调整API状态和时间显示 */
-    .api-status {
-        left: 10px;
-        padding: 4px 8px;
-        font-size: 10px;
+    .header .api-status {
+        left: 10px !important;
+        padding: 4px 8px !important;
+        font-size: 10px !important;
+        border-radius: 12px !important;
     }
     
-    .api-status-text {
-        display: none;
+    .header .api-status-text {
+        display: none !important;
     }
     
-    .time-display {
-        right: 10px;
-        padding: 4px 8px;
-        font-size: 10px;
-        letter-spacing: 1px;
+    .header .time-display {
+        right: 10px !important;
+        padding: 4px 8px !important;
+        font-size: 10px !important;
+        letter-spacing: 1px !important;
     }
 }
 
@@ -2556,6 +2557,25 @@ body::before {
     .character-creation-content .submit-btn {
         width: 100%;
         padding: 16px 30px;
+    }
+    
+    .character-creation-content .label-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+    
+    .character-creation-content .label-row .form-label {
+        white-space: nowrap;
+        letter-spacing: 1px;
+    }
+    
+    .character-creation-content .dice-btn {
+        width: 36px !important;
+        height: 36px !important;
+        padding: 8px !important;
+        flex: 0 0 auto !important;
     }
 }
 
