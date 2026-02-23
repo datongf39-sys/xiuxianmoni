@@ -2157,6 +2157,24 @@ body::before {
     .footer-decoration {
         display: none;
     }
+    
+    /* 小屏幕时调整API状态和时间显示 */
+    .api-status {
+        left: 10px;
+        padding: 4px 8px;
+        font-size: 10px;
+    }
+    
+    .api-status-text {
+        display: none;
+    }
+    
+    .time-display {
+        right: 10px;
+        padding: 4px 8px;
+        font-size: 10px;
+        letter-spacing: 1px;
+    }
 }
 
 /* 小屏幕地图布局调整 */
