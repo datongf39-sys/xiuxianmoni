@@ -198,9 +198,9 @@
             <div class="scroll-content">
                 <!-- 对话显示区域 -->
                 <div class="chat-area" id="chatArea">
-                    <div class="welcome-message">
+                    <div class="welcome-message" id="welcomeMessage">
                         <h2>欢迎来到修仙世界</h2>
-                        <p>点击右上角「设置」配置 API Key<br>开启你的修仙之旅</p>
+                        <p id="welcomeText">加载中...</p>
                     </div>
                 </div>
 
@@ -419,20 +419,23 @@
 
             if (!timeDisplay) return;
 
-            if (!app || !app.gameStateService || !app.gameStateService.gameProgress) {
-                return;
-            }
-
-            const progress = app.gameStateService.gameProgress;
-            const hourNames = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
-            const hourName = hourNames[progress.current_hour] || '卯';
-            const season = progress.season || '春';
-            const day = progress.total_days || 1;
-
             // 显示时间区域
             timeDisplay.style.display = 'block';
             if (headerButtons) {
                 headerButtons.style.display = 'none';
+            }
+
+            // 如果有游戏进度，使用实际数据；否则使用默认值
+            let hourName = '卯';
+            let season = '春';
+            let day = 1;
+
+            if (app && app.gameStateService && app.gameStateService.gameProgress) {
+                const progress = app.gameStateService.gameProgress;
+                const hourNames = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
+                hourName = hourNames[progress.current_hour] || '卯';
+                season = progress.season || '春';
+                day = progress.total_days || 1;
             }
 
             // 更新显示文本
@@ -473,10 +476,39 @@
                 apiStatusEl.className = 'api-status configured';
                 apiStatusText.textContent = 'API 已配置';
                 console.log('API状态已更新为: 已配置');
+                
+                // 更新欢迎界面为创建角色
+                updateWelcomeMessage(true);
             } else {
                 apiStatusEl.className = 'api-status';
                 apiStatusText.textContent = 'API Key 未设置';
                 console.log('API状态已更新为: 未设置');
+                
+                // 更新欢迎界面为配置API
+                updateWelcomeMessage(false);
+            }
+        }
+        
+        // 更新欢迎界面
+        function updateWelcomeMessage(hasApiKey) {
+            const welcomeText = document.getElementById('welcomeText');
+            const welcomeMessage = document.getElementById('welcomeMessage');
+            
+            if (!welcomeText || !welcomeMessage) return;
+            
+            // 检查是否已经有角色
+            if (currentCharacter) return;
+            
+            if (hasApiKey) {
+                // API已配置，显示创建角色界面
+                welcomeMessage.innerHTML = `
+                    <h2>初入仙途</h2>
+                    <p>道友，你尚未创建角色<br>请先创建角色，开启你的修仙之旅</p>
+                    <button class="create-character-btn" onclick="goToCreateCharacter()" style="margin-top: 20px; padding: 10px 30px; background: #8b7355; color: white; border: none; border-radius: 4px; cursor: pointer; font-family: 'Noto Serif SC', serif;">创建角色</button>
+                `;
+            } else {
+                // API未配置，显示配置提示
+                welcomeText.innerHTML = '点击右上角「设置」配置 API Key<br>开启你的修仙之旅';
             }
         }
 
@@ -623,21 +655,28 @@
 
         // 显示无角色提示
         function showNoCharacterPrompt() {
-            chatArea.innerHTML = `
-                <div class="create-character-prompt">
-                    <h2>初入仙途</h2>
-                    <p>
-                        道友，你尚未创建角色<br>
-                        请先创建角色，开启你的修仙之旅
-                    </p>
-                    <button class="create-character-btn" onclick="goToCreateCharacter()">
-                        创建角色
-                    </button>
-                </div>
-            `;
+            // 直接显示创建角色界面（因为能进入此函数说明应用已初始化）
+            const chatAreaEl = document.getElementById('chatArea');
+            if (chatAreaEl) {
+                chatAreaEl.innerHTML = `
+                    <div class="create-character-prompt">
+                        <h2>初入仙途</h2>
+                        <p>
+                            道友，你尚未创建角色<br>
+                            请先创建角色，开启你的修仙之旅
+                        </p>
+                        <button class="create-character-btn" onclick="goToCreateCharacter()">
+                            创建角色
+                        </button>
+                    </div>
+                `;
+            }
+            
             // 隐藏输入区域和选项面板
-            document.querySelector('.input-area').style.display = 'none';
-            document.getElementById('optionsPanel').style.display = 'none';
+            const inputArea = document.querySelector('.input-area');
+            const optionsPanel = document.getElementById('optionsPanel');
+            if (inputArea) inputArea.style.display = 'none';
+            if (optionsPanel) optionsPanel.style.display = 'none';
         }
 
         // 跳转到创建角色页面（打开模态框）
@@ -739,22 +778,25 @@
             }
             
             // 在欢迎消息中显示角色信息
-            const welcomeMsg = chatArea.querySelector('.welcome-message');
-            if (welcomeMsg) {
-                welcomeMsg.innerHTML = `
-                    <h2>欢迎回来，${currentCharacter.name}</h2>
-                    <p>
-                        战力：${currentCharacter.combat_power || 100}<br>
-                        灵根：${
-                            currentCharacter.spiritual_root_type && currentCharacter.spiritual_root_elements 
-                                ? `${currentCharacter.spiritual_root_type}(${currentCharacter.spiritual_root_elements})`
-                                : currentCharacter.spiritualRoot || '未设定'
-                        }<br>
-                        ${currentCharacter.special_constitution ? '体质：' + currentCharacter.special_constitution + '<br>' : ''}
-                        <br>
-                        你的修仙之旅即将开始...
-                    </p>
-                `;
+            const chatAreaEl = document.getElementById('chatArea');
+            if (chatAreaEl) {
+                const welcomeMsg = chatAreaEl.querySelector('.welcome-message');
+                if (welcomeMsg) {
+                    welcomeMsg.innerHTML = `
+                        <h2>欢迎回来，${currentCharacter.name}</h2>
+                        <p>
+                            战力：${currentCharacter.combat_power || 100}<br>
+                            灵根：${
+                                currentCharacter.spiritual_root_type && currentCharacter.spiritual_root_elements 
+                                    ? `${currentCharacter.spiritual_root_type}(${currentCharacter.spiritual_root_elements})`
+                                    : currentCharacter.spiritualRoot || '未设定'
+                            }<br>
+                            ${currentCharacter.special_constitution ? '体质：' + currentCharacter.special_constitution + '<br>' : ''}
+                            <br>
+                            你的修仙之旅即将开始...
+                        </p>
+                    `;
+                }
             }
         }
 
@@ -778,20 +820,23 @@
         // 页面加载完成后
         window.onload = async function() {
             try {
-                // 初始化应用
+                // 初始化应用（initApp中会调用loadCharacterInfo，根据是否有角色显示不同界面）
                 await initApp();
                 
-                // 显示开始游戏界面
-                showStartGameScreen();
+                // 注意：不要在这里调用showStartGameScreen()
+                // 因为initApp -> loadCharacterInfo 已经会根据是否有角色显示正确的界面
             } catch (error) {
                 console.error('页面加载失败:', error);
                 // 显示错误提示
-                chatArea.innerHTML = `
-                    <div class="welcome-message">
-                        <h2>应用加载失败</h2>
-                        <p>请刷新页面重试，如果问题持续存在，请检查浏览器控制台获取详细错误信息</p>
-                    </div>
-                `;
+                const chatAreaEl = document.getElementById('chatArea');
+                if (chatAreaEl) {
+                    chatAreaEl.innerHTML = `
+                        <div class="welcome-message">
+                            <h2>应用加载失败</h2>
+                            <p>请刷新页面重试，如果问题持续存在，请检查浏览器控制台获取详细错误信息</p>
+                        </div>
+                    `;
+                }
             }
         };
 
@@ -2975,6 +3020,14 @@
             if (!container) return;
             
             try {
+                // 检查 app 和 storageService 是否初始化
+                if (!app || !app.storageService || !app.storageService.db) {
+                    console.log('IndexedDB 未初始化，尝试初始化...');
+                    if (app && app.storageService) {
+                        await app.storageService.init();
+                    }
+                }
+                
                 const slots = await app.getAllSaveSlots();
                 const slotsMap = {};
                 slots.forEach(slot => {
@@ -3039,7 +3092,11 @@
                 container.innerHTML = html;
             } catch (error) {
                 console.error('渲染存档位失败:', error);
-                container.innerHTML = '<div style="text-align: center; color: #c44; padding: 20px;">加载存档位失败</div>';
+                container.innerHTML = `<div style="text-align: center; color: #c44; padding: 20px;">
+                    加载存档位失败<br>
+                    <small style="color: #888;">${error.message || '未知错误'}</small><br>
+                    <button onclick="renderSaveSlots()" style="margin-top: 10px; padding: 5px 15px; background: #8b7355; color: white; border: none; border-radius: 3px; cursor: pointer;">重试</button>
+                </div>`;
             }
         }
         
@@ -3600,7 +3657,7 @@
                     <!-- 性格 -->
                     <div class="form-group">
                         <label class="form-label">性格<span class="required">*</span></label>
-                        <textarea class="form-textarea" id="charPersonality" placeholder="描述角色的性格特点，如：清冷禁欲、凛然不可犯、外冷内热..." rows="2" required></textarea>
+                        <textarea class="form-textarea" id="charPersonality" placeholder="描述角色的性格特点，如：清冷禁欲、凛然不可犯、外冷内热..." rows="2" required oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
                         <div class="generate-buttons">
                             <button type="button" class="random-btn" onclick="generateRandomPersonality()">随机</button>
                             <button type="button" class="random-btn ai-btn" onclick="generateAIPersonality()">AI生成</button>
@@ -3610,7 +3667,7 @@
                     <!-- 外貌描述 -->
                     <div class="form-group">
                         <label class="form-label">外貌描述<span class="required">*</span></label>
-                        <textarea class="form-textarea" id="charAppearance" placeholder="描述角色的外貌特征..." rows="3" required></textarea>
+                        <textarea class="form-textarea" id="charAppearance" placeholder="描述角色的外貌特征..." rows="3" required oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
                         <div class="generate-buttons">
                             <button type="button" class="random-btn" onclick="generateRandomAppearance()">随机</button>
                             <button type="button" class="random-btn ai-btn" onclick="generateAIAppearance()">AI生成</button>

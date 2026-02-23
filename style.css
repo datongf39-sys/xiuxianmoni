@@ -38,6 +38,8 @@ body {
     overflow: hidden;
     color: #2a2a2a;
     position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 /* 水墨纹理背景 */
@@ -279,16 +281,27 @@ body::before {
     flex-direction: column;
     max-width: 1200px;
     width: 75%;
-    height: calc(100vh - 120px);  /* 头部60px + 底部导航60px */
-    margin: 60px auto 0;  /* 顶部60px，底部无margin */
+    flex: 1;
+    margin: 60px auto 50px;  /* 顶部60px，底部50px给导航栏 */
     padding: 0 20px;
     position: relative;
     z-index: 5;
+    overflow: hidden;
+}
+
+/* 小屏幕时宽度自适应 */
+@media (max-width: 768px) {
+    .container {
+        width: 100%;
+        padding: 0 10px;
+    }
 }
 
 /* 卷轴容器 - 包含所有内容 */
 .scroll-container {
     flex: 1;
+    display: flex;
+    flex-direction: column;
     background: linear-gradient(180deg, #faf8f5 0%, #f5f3f0 100%);
     border: 1px solid #c8c0b8;
     position: relative;
@@ -323,17 +336,19 @@ body::before {
 
 /* 卷轴内容区域 - 扩展宽度 */
 .scroll-content {
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     padding: 0 20px;  /* 缩小边距，给正文更多空间 */
-    overflow-y: auto;
+    box-sizing: border-box;
 }
 
 /* 对话区域 */
 .chat-area {
     flex: 1;
-    padding: 40px 40px;
+    min-height: 0;
+    padding: 40px 40px 0 40px;
     overflow-y: auto;
 }
 
@@ -1380,13 +1395,9 @@ body::before {
     border-color: #8a8278;
 }
 
-/* 底部装饰 */
+/* 底部装饰 - 有底部导航栏时不显示 */
 .footer-decoration {
-    text-align: center;
-    padding: 20px;
-    color: #a8a098;
-    font-size: 12px;
-    letter-spacing: 4px;
+    display: none;
 }
 
 /* 底部导航栏 */
@@ -1508,6 +1519,15 @@ body::before {
     font-size: 14px;
     color: #7a7268;
     margin-left: 20px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+#map-breadcrumb::-webkit-scrollbar {
+    display: none;
 }
 
 .map-crumb {
@@ -2132,6 +2152,31 @@ body::before {
     #map-detail-panel {
         width: 300px;
     }
+    
+    /* 竖屏时隐藏底部装饰 */
+    .footer-decoration {
+        display: none;
+    }
+}
+
+/* 小屏幕地图布局调整 */
+@media (max-width: 768px) {
+    #map-main {
+        flex-direction: column;
+    }
+    
+    #map-panel {
+        flex: 1;
+        padding: 15px;
+    }
+    
+    #map-detail-panel {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid #c8c4bc;
+        padding: 15px;
+        max-height: 40%;
+    }
 }
 
 /* 角色创建模态框样式 */
@@ -2308,9 +2353,11 @@ body::before {
 }
 
 .character-creation-content .form-textarea {
-    resize: vertical;
-    min-height: 80px;
+    resize: none;
+    min-height: auto;
+    height: auto;
     line-height: 1.8;
+    overflow: hidden;
 }
 
 .character-creation-content .label-row {
