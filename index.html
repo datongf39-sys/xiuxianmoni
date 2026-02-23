@@ -3472,7 +3472,11 @@
         // 随机生成性格
         function generateRandomPersonality() {
             const randomIndex = Math.floor(Math.random() * characterPresets.length);
-            document.getElementById('charPersonality').value = characterPresets[randomIndex].personality;
+            const textarea = document.getElementById('charPersonality');
+            textarea.value = characterPresets[randomIndex].personality;
+            // 触发高度调整
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
         }
 
         // 随机生成外貌
@@ -3508,7 +3512,11 @@
 
             const presetsToUse = matchingPresets.length > 0 ? matchingPresets : characterPresets.filter(p => p.gender === gender);
             const randomIndex = Math.floor(Math.random() * presetsToUse.length);
-            document.getElementById('charAppearance').value = presetsToUse[randomIndex].appearance;
+            const textarea = document.getElementById('charAppearance');
+            textarea.value = presetsToUse[randomIndex].appearance;
+            // 触发高度调整
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
         }
 
         // AI生成性格
