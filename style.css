@@ -2376,7 +2376,6 @@ body::before {
     min-height: auto;
     height: auto;
     line-height: 1.8;
-    overflow: hidden;
 }
 
 .character-creation-content .label-row {
