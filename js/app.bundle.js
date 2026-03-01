@@ -4,7 +4,7 @@
 class StorageService {
     constructor() {
         this.dbName = 'xiuxian_game';
-        this.dbVersion = 2; // 升级版本以添加save_slots表
+        this.dbVersion = 3; // 升级版本以添加 social_circle 表
         this.db = null;
         this.maxSlots = 10; // 最大存档位数量
     }
@@ -54,6 +54,13 @@ class StorageService {
                     const saveSlotStore = db.createObjectStore('save_slots', { keyPath: 'slot_id' });
                     saveSlotStore.createIndex('character_id', 'character_id', { unique: false });
                     saveSlotStore.createIndex('timestamp', 'timestamp', { unique: false });
+                }
+
+                // 新增 social_circle 社交关系表
+                if (!db.objectStoreNames.contains('social_circle')) {
+                    const socialStore = db.createObjectStore('social_circle', { keyPath: ['character_id', 'npc_id'] });
+                    socialStore.createIndex('character_id', 'character_id', { unique: false });
+                    socialStore.createIndex('npc_id', 'npc_id', { unique: false });
                 }
 
                 console.log('IndexedDB升级完成');
@@ -363,6 +370,56 @@ class StorageService {
             }
         }
         return null;
+    }
+
+    // ==================== 社交系统方法 ====================
+
+    async getSocialCircle(characterId) {
+        return this._transaction(['social_circle'], 'readonly', (transaction) => {
+            const store = transaction.objectStore('social_circle');
+            const index = store.index('character_id');
+            const request = index.getAll(characterId);
+            return new Promise((resolve) => {
+                request.onsuccess = () => resolve(request.result || []);
+            });
+        });
+    }
+
+    async getNPCRelation(characterId, npcId) {
+        return this._transaction(['social_circle'], 'readonly', (transaction) => {
+            const store = transaction.objectStore('social_circle');
+            const request = store.get([characterId, npcId]);
+            return new Promise((resolve) => {
+                request.onsuccess = () => resolve(request.result);
+            });
+        });
+    }
+
+    async updateNPCRelation(characterId, npcId, data) {
+        return this._transaction(['social_circle'], 'readwrite', async (transaction) => {
+            const store = transaction.objectStore('social_circle');
+            const existing = await new Promise(resolve => {
+                const req = store.get([characterId, npcId]);
+                req.onsuccess = () => resolve(req.result);
+            });
+
+            const now = new Date().toISOString();
+            const newRecord = { 
+                ...(existing || {}),
+                ...data,
+                character_id: characterId,
+                npc_id: npcId,
+                updated_at: now,
+            };
+
+            if (!existing) {
+                newRecord.created_at = now;
+                newRecord.status = newRecord.status || 'known';
+                newRecord.affection = newRecord.affection || 0;
+            }
+
+            store.put(newRecord);
+        });
     }
 }
 
@@ -798,7 +855,7 @@ LOCATION每次必填，其余仅在有实际变化时填写。
 
 剧情正文（${Math.floor(this.maxTokens * 0.6)}-${Math.floor(this.maxTokens * 0.8)}字，根据max_tokens=${this.maxTokens}动态调整）
 [空行]
-选项列表：2-4个选项，具体可行，符合当前剧情
+2-4个选项，每个选项单独一行，以「」包裹，具体可行，符合当前剧情
 [空行]
 【结算开始】
 ...
@@ -809,11 +866,14 @@ LOCATION每次必填，其余仅在有实际变化时填写。
 【六界格局与规则】
 天界：天神居九重天，神力源自天道，天道近来式微。天规限制天神不可直接插手世间，
   下凡须封印法力，违规受雷刑。天神入梦术每月一次，仅对一人，一盏茶时长，不稳定。
-人间三国：玄北国（雪山极寒，男尊）；西刹国（迷雾森林，木系法术）；东澜国（滨海，女尊，贸易发达）。
+人间三国：
+  ·玄北国（雪山极寒，男尊）
+  ·西刹国（迷雾森林中央，以木系法术为立国根基，男女平等。国土四面被极其广阔的迷雾森林所环绕，常年雾气弥漫，通灵野兽众多，使外人难以进出——唯有满月之夜迷雾散去，外人方可在西刹国人的引路下穿越森林）
+  ·东澜国（滨海之地，四季分明，港口密布，贸易立国。国人自幼习水，御水之术了得，水系法术为根基战力。国内奉行女尊男卑，于孟章神君治理下繁荣，是人间三国中经济最发达者）
   南邺已被浑渊占领，国君已死，浑渊被封印于赤山无法外出，表面繁荣实则高压。
 
 【秘密档案 · 绝对禁止直接表露】
-以下内容只能通过剧情中的只言片语、细节暗示、NPC对话等方式间接呈现，
+以下内容只能通过剧情中的只言片语、细节暗示、NPC对话等方式间接呈现，其中暗阁的一切内容均为秘辛，禁止透露
 严禁在任何时候直接向玩家陈述或解释。这些秘密是世界的底层设定，需要玩家自行拼凑。
 
 ▸玄北秘辛：
@@ -841,6 +901,51 @@ LOCATION每次必填，其余仅在有实际变化时填写。
   【呈现方式】：通过NPC对话提及"当年国君已死"等说法，
   或南邺的异常现象暗示神君未死，不可直接说明真相
 
+▸东澜秘辛：
+  ·孟章神君本是天界天神，本体青龙，因闯塔十四层被封为四方神
+  ·孟章神君镇压浑渊大帝后于滨海建东澜国，以国君身份亲自执政，万民不知其为神
+  ·近来南邺国灭亡，东澜国与南邺相邻，孟章神君深感威胁
+  ·孟章神君故作昏君以打消浑渊大帝进攻的意图
+  ·孟章神君近来刻意于朝堂上表现出漫不经心的态度，部分朝臣私下已有微词，圣女对此隐有察觉但未明言
+  ·孟章神君偶尔以普通渔女装扮出现在港口区，此事极少数侍从知晓
+  ·七星使中至少有两人常年潜伏于港口市集监察异动
+  ·南邺国灭亡后，望海城的战略地位急剧上升，孟章神君秘密增派了驻军，表面上仍维持普通城区的形态，实则已是东澜国对南方的核心防线
+  ·望海城军事扩建以「修缮」名义进行，对外宣称仅为应对海盗，实际备战程度远超表面
+  ·孟章神君对望海城的部署属最高机密，即便三省长官也只知其大略，七星使全员知情
+  【呈现方式】：可通过国君行为的异常（朝堂上的昏庸决策、深夜独自望向南邺方向、
+  对军政大事的刻意疏忽、朝臣的私下议论、圣女的欲言又止、港口区偶遇的熟悉身影、市集中的神秘观察者、
+  望海城的异常军事调动、城中「修缮」工程的频繁程度、三省长官对南方军务的讳莫如深、七星使成员的神秘行踪等细节暗示），不可直接说明真相
+
+▸西刹秘辛：
+  ·西刹国当前正处于政治动荡之中
+  ·监兵神君本是天界天神，本体白虎，以国君身份亲自执政数百万年
+  ·前丞相联合大将军策动篡位，监兵神君心灰意冷，自愿退位隐居迷雾森林深处
+  ·现任国君为原丞相，擅权谋，以维稳之名四处搜查监兵神君踪迹，实为斩草除根
+  ·监兵神君隐于迷雾森林深处，现国君遣暗卫搜查，大将军亦暗中四处打听以保其性命
+  ·封林殿原为监兵神君寝宫，篡位后以封条与符阵封闭，现国君曾数次令人清查其中密室
+  ·后花园是大将军当年与公主相遇之处，现已封闭不对外开放，尚未得知是何女子假扮公主
+  ·后花园的封闭引发宫内诸多猜测，国君对此从不作解释，大将军偶尔会以巡视之名绕行后花园外围，从不入内
+  ·内库重新清点时发现数件来历不明的古物
+  ·苍华宫城的后花园封闭后引发宫内诸多猜测
+  ·苍梧御道现国君篡位后仪仗风格已改，旧臣私下称其「面目全非」
+  ·朱樨巷旧臣与新贵混居，明面相安，暗中互防
+  ·望林台是现国君派人监视城内动向的据点之一
+  ·都察院名义上监察百官，实则已成现国君打压异见的工具
+  ·太医署现国君对其格外重视
+  ·巡检司篡位后人员经过大规模替换，对旧臣动向监控极严
+  ·向导司现国君将其纳入锦衣卫监管
+  ·镇檀街每逢满月前后人流激增，外来旅人集中涌入，是锦衣卫眼线最密集、消息最混杂的时段，也是旧臣秘密传信的最佳掩护时机
+  ·木渊城的千年古木林是当地的禁地，从不采伐，传说林中藏有不为外人所知的秘密
+  ·大将军与现国君安插的亲信将领之间暗中博弈，表面相安，实则互相防范
+  ·大将军在苍鸣城的望雾台独坐时，从不允许任何人跟随。部下猜测他是在向迷雾森林方向眺望，但无人敢问
+  ·白虎石台据说是四方神当年镇压浑渊大帝时留下的痕迹，监兵神君据传常于此处独坐
+  ·监兵神君隐所位置不明，现国君遣出的暗卫已有数人进入森林后失去联络
+  ·监兵神君隐居于森林深处，具体位置不明，现国君遣暗卫搜查，大将军亦暗中打探，均未有定论
+  【呈现方式】：可通过朝堂上的异常（新任国君的权谋手段、对旧臣的清洗、
+  对迷雾森林的频繁搜查、民间对前任国君的讳莫如深、大将军的暗中行动、
+  封林殿的异常封禁、后花园的封闭原因、后花园外围的神秘脚步声、国君对后花园话题的刻意回避、大将军对后花园的异常关注、内库古物的来历、
+  苍梧御道的仪仗变化、朱樨巷的微妙气氛、望林台的监视人员、都察院的权力滥用、太医署的异常重视、巡检司的人员替换、向导司的锦衣卫监管等细节暗示），不可直接说明真相
+
 ▸器灵秘辛：
   ·神器器灵实为初代天神，因沾染天道灵气而生
   ·逐月楼楼主本质是器灵（初代天神），主人已亡故，可自主行动
@@ -859,6 +964,63 @@ LOCATION每次必填，其余仅在有实际变化时填写。
 ▸仙门秘辛：
   ·暗阁是衢府旗下的暗杀组织，对外不公开隶属关系
   ·衢府通过暗阁处理不便公开的事务
+  ·衢府主君明面上辅佐府君，实则对府君因私拉拢阆阙一事持强烈反对意见，认为其难当大任。二人之间的裂痕在衢府内层已非秘密
+  ·商榷二楼的私下流通从未被官方承认，但每次开榷前后总有传言流出，声称某件本不在拍卖名单上的奇物悄然易主
+  ·天路是暗阁专属历练场，用于训练新晋杀手，历来进入者九死一生，由暗阁阁主亲自掌管入口与出口，衢府无权干涉其内部事务
+  ·天路内部环境为密林、险崖、毒虫、野兽、迷阵，暗阁弟子形容「进去之后只有方向，没有路」
+  ·现任暗阁阁主为历来唯一通关天路血腥试炼的人，此事至今仍是暗阁的传说
+  ·天路是暗阁对衢府的底气之一——衢府需要暗阁，却无法真正掌控天路内部
+  ·据说天路深处有一处常年迷雾不散的空地，空地中央立有一块无字石碑。没有人知道那块石碑是做什么用的，因为进入天路者鲜有人能走到那么深处
+  ·大比期间云集坊是各门派弟子消息交流最密集的地方，也是衢府矍徕物色人才的重要场所，更是暗阁观察各势力动向的绝佳时机
+  ·暗阁内部阶位体系为天·地·玄·黄四阶，每阶分甲乙丙丁四等，共十六级，由低至高：黄丁→黄丙→……→天甲
+  ·暗阁成员行事隐秘，惯以各类面目示人，以温润或无害的外表掩盖真实目的
+  ·暗阁名义隶属衢府，实则相互制约；现任阁主弑父上位后，暗阁对衢府的离心力持续增大
+  ·暗阁指挥层：阁主总揽，三位长老各司其职——云破月（外交）·花弄影（训练）·蓑衣客（情报+任务）
+  ·阁主殿的位置在暗阁内部属于最高机密，每隔一段时间会「迁移」一次——实则是出入口改变，建筑本身并未移动
+  ·长老议事厅每月定期一次，另有突发事件时临时召集，临时召集由蓑衣客发出信号
+  ·长老议事厅参与人员为阁主与三位长老，除非特殊情况，中阶成员不得列席
+  ·长老议事厅议事规则为无固定发言顺序，阁主从不主动发言，惯以沉默逼三位长老先开口
+  ·新人试炼场负责人为花弄影，以蜘蛛鬼面示人，全程不发一言，仅以动作指令推进试炼
+  ·新人试炼场考核内容包括体能极限测试、毒物耐受测试、应激反应测试、服从性测试四项，均须通过
+  ·新人试炼场淘汰机制为任一项目不达标即淘汰，淘汰者记忆会被以特殊手段抹去，平安离开，不知曾来过此处
+  ·新人试炼场历来通过率约三成，花弄影对此毫无表情，阁主则称「正常」
+  ·天路历练为进阶考核，非入门考核；新人试炼场与天路是两套完全不同的体系
+  ·易容习艺室内有一条不成文的规矩：不得在室内对他人使用习得的伪装技巧，哪怕是测试。第一次警告，第二次……没有人见过第二次
+  ·毒术研习室负责人名义上由花弄影统辖，实际日常教习由数名地阶成员轮值，阁主偶尔亲临指导
+  ·毒术研习室基础课程为面部改变、体型调整、声线变换、气息压制，为所有成员必修；进阶课程为长期易容维持、双重身份管理、在法力检测下保持伪装，仅玄阶以上开放
+  ·毒术研习室毒物分级为分接触毒、吸入毒、入食毒、法力传导毒四类，各类再按效果分级
+  ·暗阁解毒技术在仙门各势力中首屈一指，但花弄影身中的奇毒至今无解，此事是研习室公开的秘密
+  ·毒术研习室内有阁主专属蛊虫培育区，非阁主本人不得进入
+  ·所有已验证毒方与解方皆存档，档案以暗语写就，仅阁主与花弄影可完整解读
+  ·钓台表面是蓑衣客的私人休闲之地，实则是暗阁情报网络最核心的节点——来自各地的消息以各种形式汇聚于此，在钓台四周的特殊法阵保护下被蓑衣客解读、分级、分发
+  ·钓台四周有蓑衣客亲自布设的情报屏蔽阵，任何人在法阵外看不出此处有何异样
+  ·蓑衣客在钓台接收、解读、分级情报，决定哪些上报阁主，哪些在长老层面处理，哪些直接转化为任务
+  ·暗阁任务由蓑衣客起草，以特定暗号送达对应成员，从不集中公告
+  ·无人可主动拜访钓台，若需汇报，须以特定信号通知蓑衣客，由他决定是否接见
+  ·暗阁在人间三国及仙门各地设有数量不明的情报中转站，外表皆为普通场所——茶馆、药铺、书坊、甚至是街边摊贩，各中转站之间互不知晓彼此的存在，单线联络，以防一处暴露牵连全局
+  ·情报中转站以特定暗语、信物或法力标记传递情报，从不使用明文
+  ·情报中转站启用与废弃机制为定期轮换，一旦有暴露风险立即废弃，负责人的后续处理由蓑衣客决定
+  ·情报中转站与云破月负责的外交体系平行运作，二者互不干涉，情报汇总后方合流至蓑衣客处
+  ·云破月外交室风格精致温和，花卉陈设，茶具考究，是暗阁内部最「人畜无害」的地方
+  ·云破月外交室功能为接待有意委托暗阁的各界人士，谈判委托细节，处理外部争议与投诉
+  ·云破月外交室来访规则为来访者须经云破月本人许可方可进入，且来访时间、身份均由云破月掌控，阁主从不干预
+  ·云破月外交室内有一面铜镜，云破月从不正视它。原因无人知晓，亦无人敢问
+  ·暗档室存档内容包括成员个人档案、任务委托方记录、任务结果、异常事件记录、已故成员的遗言（若有）
+  ·暗档室权限等级为阁主可查阅全部，蓑衣客可查阅任务与情报类档案，长老可查阅各自职责范围内的记录，其余人员无权限
+  ·暗档室有单独封存阁主上位前后特定时段记录的封印区，封印由阁主亲自施加，连蓑衣客都无法打开
+  ·暗档室保密机制为任何试图强行开启档案的行为会触发毁档法阵，档案化为灰烬，施法者同时受到反噬
+  ·花弄影曾试图查阅其父死亡时段的档案，但权限不足，此事她从未对任何人提起
+  ·幽狱处置对象为叛徒与严重违规者，仅阁主批准方可启用
+  ·幽狱处置方式视情况而定，有处以极刑者，有永久囚禁者，亦有被种下禁制后释放的
+  ·幽狱知情范围仅阁主与蓑衣客知晓其真正位置，连花弄影与云破月都被蒙在鼓里
+  ·幽狱偶尔会有些「不知所谓」的成员被送入，表面上的原因与实际原因往往大相径庭
+  ·幽狱历任阁主都在其中留下自己的「印记」，每一任阁主都必须在前任的印记前完成「交接」仪式
+  ·幽狱启用条件为叛阁、暴露组织秘密、私自接触禁止委托、对长老以上级别动手
+  ·幽狱关押等级分隔离观察、审讯监禁、永久关押三级，由阁主决定等级
+  ·幽狱审讯负责人为花弄影，以毒术配合审讯，从不留明显伤痕，从不失手
+  ·幽狱永久关押者据说有深处数个永久封印格，关押者在法阵维持下处于意识模糊状态，既不死亦无法逃脱
+  ·幽狱已知案例为阁主上位前曾有数位长老被关入幽狱，出来后均成为阁主的死忠拥护者，此事无人公开谈论
+  ·暗阁成员之间流传着一句话：「进幽狱的，不是变了，就是没了。」没有人知道「没了」是什么意思，也没有人想搞清楚
   【呈现方式】：通过暗阁成员对衢府的特殊态度、
   任务来源的暗示、令牌上的细微标记等细节暗示
 
@@ -957,11 +1119,13 @@ ${importantNpcs}`;
 
         switch (this.currentProvider) {
             case 'gemini':
-                // Gemini API格式
+                // Gemini API格式 - 将系统提示词作为第一条用户消息
                 apiUrl = apiUrl.replace('{model}', model);
+                const geminiSystemPrompt = this._buildSystemPrompt();
                 requestParams = {
                     contents: [
-                        { role: 'user', parts: [{ text: this._buildSystemPrompt() }] },
+                        { role: 'user', parts: [{ text: `以下是系统设定，请严格遵循：\n\n${geminiSystemPrompt}\n\n---\n以上设定必须严格遵守。现在开始游戏。` }] },
+                        { role: 'model', parts: [{ text: '明白了，我会严格按照上述设定进行游戏。' }] },
                         ...context.map(c => ({ role: c.role === 'assistant' ? 'model' : 'user', parts: [{ text: c.content }] })),
                         { role: 'user', parts: [{ text: fullPrompt }] }
                     ],
@@ -1059,6 +1223,8 @@ ${importantNpcs}`;
                 switch (this.currentProvider) {
                     case 'gemini':
                         content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                        console.log('Gemini raw response:', data);
+                        console.log('Gemini parsed content:', content);
                         break;
                     case 'claude':
                         content = data.content?.[0]?.text;
@@ -1190,7 +1356,10 @@ ${importantNpcs}`;
             fullPrompt += `称号：${currentNPC.title}\n`;
             fullPrompt += `身份：${currentNPC.sect} ${currentNPC.title}\n`;
             fullPrompt += `性格：${currentNPC.personality}\n`;
-            fullPrompt += `专长：${currentNPC.speciality}\n`;
+            fullPrompt += `专长：${currentNPC.speciality || '无'}\n`;
+            if (currentNPC.tags && currentNPC.tags.length > 0) {
+                fullPrompt += `性格标签：${currentNPC.tags.join("、")}\n`;
+            }
             if (currentNPC.relationship) {
                 fullPrompt += `人物关系：${currentNPC.relationship}\n`;
             }
@@ -1890,8 +2059,46 @@ class GameStateService {
             // 3. 处理好感度变化
             if (settlement.relations && settlement.relations.length > 0) {
                 for (const relation of settlement.relations) {
-                    await this.updateNPCRelation(relation.npc, relation.change);
-                    result.changes.push({ type: 'relation', npc: relation.npc, change: relation.change });
+                    const staticData = window.gameApp.getStaticData();
+                    const npc = (staticData.npcs || []).find(n => n.name === relation.npc);
+                    if (!npc) continue;
+
+                    const characterId = this.currentCharacter.id;
+                    const npcId = npc.id;
+
+                    // 获取现有关系
+                    const existingRelation = await this.storageService.getNPCRelation(characterId, npcId);
+                    const currentAffection = existingRelation ? existingRelation.affection : 0;
+                    const newAffection = Math.max(-100, Math.min(100, currentAffection + relation.change));
+
+                    // 更新数据库
+                    await this.storageService.updateNPCRelation(characterId, npcId, {
+                        affection: newAffection,
+                        npc_name: npc.name, // 冗余存储NPC名字方便显示
+                        status: existingRelation ? existingRelation.status : 'known' // 如果不存在，则设为known
+                    });
+
+                    result.changes.push({ type: 'relation', npc: relation.npc, change: relation.change, newAffection: newAffection });
+
+                    // (保留之前的反应预测逻辑)
+                    try {
+                        if (npc.tags && npc.tags.length > 0) {
+                            let reaction = 'neutral';
+                            const change = relation.change;
+                            if (change > 5) { reaction = npc.tags.includes('容易感动') ? '感动' : (npc.tags.includes('难以取悦') ? '满意' : '高兴'); }
+                            else if (change > 0) { reaction = npc.tags.includes('喜怒不形于色') ? '内心毫无波澜' : '略有欣喜'; }
+                            else if (change < -5) { reaction = npc.tags.includes('易怒') ? '愤怒' : (npc.tags.includes('记仇') ? '记下了' : '失望'); }
+                            else if (change < 0) { reaction = npc.tags.includes('喜怒不形于色') ? '内心毫无波澜' : '不快'; }
+
+                            if (reaction !== 'neutral') {
+                                this.gameProgress.npc_reactions = this.gameProgress.npc_reactions || {};
+                                this.gameProgress.npc_reactions[relation.npc] = reaction;
+                                result.changes.push({ type: 'reaction', npc: relation.npc, reaction: reaction });
+                            }
+                        }
+                    } catch (e) {
+                        console.error('处理NPC反应预测失败:', e);
+                    }
                 }
             }
 
@@ -1963,10 +2170,21 @@ class GameStateService {
 
             // 10. 处理首次互动记录
             if (settlement.encounter) {
-                this.gameProgress.encountered_npcs = this.gameProgress.encountered_npcs || [];
-                if (!this.gameProgress.encountered_npcs.includes(settlement.encounter)) {
-                    this.gameProgress.encountered_npcs.push(settlement.encounter);
-                    result.changes.push({ type: 'encounter', npc: settlement.encounter });
+                const staticData = window.gameApp.getStaticData();
+                const npc = (staticData.npcs || []).find(n => n.name === settlement.encounter);
+                if (npc) {
+                    const characterId = this.currentCharacter.id;
+                    const npcId = npc.id;
+                    const existingRelation = await this.storageService.getNPCRelation(characterId, npcId);
+
+                    // 如果关系不存在或状态为 unknown，则触发弹窗
+                    if (!existingRelation || existingRelation.status === 'unknown') {
+                        // 调用全局函数显示弹窗
+                        if (window.showEncounterModal) {
+                            window.showEncounterModal(npc);
+                        }
+                        result.changes.push({ type: 'encounter', npc: settlement.encounter });
+                    }
                 }
             }
 
@@ -2028,6 +2246,35 @@ const staticData = {
         description: '天道为轴，六界并立'
     },
 
+    // NPC标签行为描述映射
+    tag_descriptions: {
+        // 信息类
+        '消息灵通': '此人交游广阔，或有特殊渠道，对各种大小事件、秘闻轶事知之甚详。',
+        '消息闭塞': '此人圈子狭小，不闻外事，对外界发生的事情知之甚少。',
+        '爱八卦': '此人对他人隐私、坊间传闻有浓厚兴趣，喜欢打探并传播消息。',
+        '守口如瓶': '此人言语谨慎，能严守秘密，绝不泄露不该说的话。',
+        // 性格类
+        '记仇': '此人有仇必报，点滴之怨亦会铭记在心，寻机报复。',
+        '不记仇': '此人心胸宽广，不将小事放在心上，即便有过节也容易原谅。',
+        '护短': '此人极其维护自己人，无论对错都会偏袒自己一方。',
+        '慕强': '此人崇拜强者，对力量、地位或能力出众者怀有敬意和向往。',
+        '爱财': '此人对金钱、财物有强烈的渴望，行为常以利益为导向。',
+        '重情义': '此人看重人与人之间的情感联系，为朋友、亲人可以两肋插刀。',
+        '冷漠自持': '此人情感不外露，待人处事保持距离，显得冷淡且克制。',
+        // 社交类
+        '自来熟': '此人性格外向，能迅速与陌生人拉近关系，毫不怯场。',
+        '不近人情': '此人行事刻板，不讲情面，严格按规矩或自身原则办事。',
+        '圈子小': '此人社交圈非常有限，只与少数特定的人来往。',
+        '人脉广': '此人认识三教九流的各色人物，关系网庞大。',
+        '爱热闹': '此人喜欢人多、场面大的环境，享受喧嚣与繁华。',
+        '喜独处': '此人倾向于避开人群，享受一个人的宁静时光。',
+        // 反应类
+        '易怒': '此人情绪控制能力较差，容易因小事而发怒。',
+        '喜怒不形于色': '此人城府深，内心想法不会轻易表现在脸上。',
+        '容易感动': '此人情感丰富，内心柔软，容易被他人的善意或不幸所打动。',
+        '难以取悦': '此人标准极高，寻常的示好或成就很难让他/她感到满意。'
+    },
+
     // 玄北国风物志
     local_features: {
         canghu_jie: '苍斛街南北全长约三里，沿街有流动摊贩二三十处，主要售卖烤肉串、热茶、糖葫芦式的冰糖果串等小食。每逢年节，苍斛街会悬挂冰灯数百盏，是凛京最壮观的景象之一。',
@@ -2056,6 +2303,86 @@ const staticData = {
             经济: '由专门的顾氏粮行负责对外贸易，外人只能在村口与指定顾氏代表交易',
             特产: '人世间粳米、时蔬、瓜果（玄北国其他地区完全无法种植），价格三至五倍于普通粮',
             货币: '与外界相同，但外人进村时若发现则一律驱逐，不问缘由'
+        },
+        muyuan_cheng: {
+            商业特色: '各类木材、藤条、树脂、灵木原料，御桓派有时派人来此收购特殊木料',
+            居民构成: '伐木工、木匠、藤编匠人为主'
+        },
+        youhuang_cheng: {
+            商业特色: '灵草、毒草、特制药剂，部分药材仅在西刹国境内生长，价格极高',
+            特殊传统: '每年春分举行「百草会」，全城药农展示当年新培育的草药品种，获选者可得官方采购资格',
+            居民构成: '药农、草药修士、毒草研究者，男女各半，是西刹国男女平等执行最彻底的城区之一'
+        },
+        cangming_cheng: {
+            居民构成: '驻军及家眷、后勤工人，外来人员须经严格盘查方可入城'
+        },
+        linze_cheng: {
+            商业特色: '林中粳米、水系灵草、淡水鱼获，部分供往苍梧城皇城',
+            居民构成: '农民、水系修士、灌渠工人，整体安静'
+        },
+        miwu_senlin: {
+            基本规则: '常年迷雾弥漫，通灵野兽众多。满月之夜雾散，西刹国人已然习惯，可自由进出；外人须有西刹国人领路，否则极易丧命于野兽之下',
+            内部地貌: '森林极广，深处地形复杂，有古树群、沼泽地、天然石窟、隐秘水源等，仅长期在此活动的猎人与向导知晓部分路径',
+            通灵野兽: '种类繁多，从普通灵兽到上古通灵异兽皆有，溟安门弟子对此最为熟悉，偶来此驯兽或收集特殊兽类',
+            满月规律: '每月满月之夜迷雾完全散去，持续约一夜，此后数日边缘地带雾气较淡，深处仍有残雾'
+        },
+        xianmen: {
+            诛仙台: '据说诛仙台的白骨每隔数十年会被悄悄替换一批，以保持「新鲜感」。此事衢府从未承认，亦从未否认。',
+            商榷: {
+                开放频率: '百年一开，每次持续数日，是仙门最重要的珍宝流通场合',
+                进入资格: '持乾令者可入，每位持令者可携带一名无乾令者随行',
+                面具规定: '进入后须全程佩戴面具，防止因财货竞争引发冲突，衢府提供统一款式，亦可自备',
+                楼层划分: '一楼为普通拍卖区，对所有合规入场者开放；二楼为贵宾房间，有权有钱者方可被安排',
+                二楼特权: '二楼可通过隐秘竞价方式参与一楼拍卖，亦有部分珍品仅在二楼私下流通',
+                货品来源: '衢府珍藏、各门派送拍、寻珍于天涯海角所觅得的奇珍',
+                防抢措施: '商榷内法阵极强，强行夺货者会被即时镇压，衢府护宝全程驻守',
+                私下流通: '商榷二楼私下流通从未被官方承认，但每次开榷前后总有传言流出，声称某件本不在拍卖名单上的奇物悄然易主'
+            },
+            仙岛位置: '玄北国与东澜国交界海域，对外称「蓬莱仙岛」，孤岛独立，与人间隔绝',
+            进入资格: '持乾令者方可入岛，乾令由衢府每年按门派规模分配；千年大比期间无乾令者亦可入岛',
+            最高机构: '衢府，府君执掌，凌驾于各门派之上，拥有大量奇珍异宝',
+            独立势力: '阆阙——除灵师协会，不受门派及衢府管辖，总部位于东澜国境内',
+            隐患势力: '暗阁——隶属衢府的暗杀组织，与衢府相互制约，现隐隐有崛起推翻衢府之迹象',
+            乾令制度: '衢府每年给予各门派一定数量乾令，按门派规模划分；门派从中选拔最优者获得乾令',
+            千年大比: '内容涉及炼丹·炼器·卜策·驭兽·武试，前三名获丰厚修炼资源与功法，仅限门派弟子参与',
+            散修定义: '无门派者称「除灵师」，有独立规矩，不受衢府管辖，大多效忠人间三国帝王',
+            云集坊: {
+                启用时间: '仅于千年大比期间启用，平日此处为空旷广场，供修士在岛内短暂停留休息',
+                建造方式: '衢府以阵法快速搭建，大比期间可容纳数百门派弟子同时入住',
+                区域划分: '按门派分区入住，各门派区域之间有低阶隔离阵，防止门派间摩擦升级',
+                配套设施: '基础饮食供给处、伤药补给点、赛事信息公示板、裁判团驻点',
+                特殊规定: '大比期间云集坊内禁止私自决斗，违者由沂司记录在案，情节严重者取消参赛资格',
+                拆除时间: '大比结束后三日内完全拆除，建筑材料（阵法组件）由衢府收回存档'
+            },
+            琼台居: {
+                位置: '衢府建筑群后方，以月洞门与公共区域相隔，非居住人员不得擅入',
+                居住人员: '府君、主君、沂司、矍徕（出行时不在）、鼎羽、鹳甄、丘谒、枢谌及护宝等在岛人员',
+                建筑风格: '素雅白石灵木，石径相连，种有仙草，常年如春，气候宜人',
+                特殊区域: '府君独居庭院位于琼台居最深处，面积最大，常年有法阵环绕，外人即便入内亦无法靠近',
+                暗阁位置: '暗阁阁主及长老理论上不驻留琼台居，另有独立的居所隐于天路周边，具体位置不对外公开'
+            }
+        }
+    },
+
+    // 东澜国风物志
+    donglan_features: {
+        chao_lan: {
+            商业特色: '新鲜与腌制海货、鱼油、鱼胶、珍珠养殖（小规模）',
+            居民区: '渔民居多，以女性户主为主，临海一侧建有晒网场与修网台',
+            特殊之处: '城区海域下有天然珊瑚礁群，当地传说礁中居有海灵，渔民不会在礁区撒网'
+        },
+        jin_ping: {
+            商业特色: '丝绸、麻布、海纹刺绣、天然染料，批发为主，零售为辅',
+            特殊传统: '每年秋季举行「锦绣会」，全城织坊展示当年新品，获奖者可得官方采购订单',
+            居民构成: '织女、染匠、绣娘为主，几乎全为女性，男性多为搬运与后勤'
+        },
+        bi_shui: {
+            商业特色: '灵稻、水系药草、修炼辅材，部分供往溟都皇城',
+            居民构成: '农民、水系修士、灵草采集者，整体较其他城区安静'
+        },
+        wang_hai: {
+            对外保密: '城区军事扩建以「修缮」名义进行，对外宣称仅为应对海盗，实际备战程度远超表面',
+            居民构成: '驻军及家眷、后勤工人、少量渔民，外来人员受到比其他城区更严格的盘查'
         }
     },
     
@@ -2096,7 +2423,7 @@ const staticData = {
                             slug: 'linjing',
                             name: '凛京',
                             location_type: 'city',
-                            description: '国都·凛京建于一处相对平坦的山腰台地之上，四周以十丈高的玄铁城墙围合，城墙上常年结有冰晶，反光如镜。城内建筑多以黑石为基、雪松为梁，屋顶皆有特制的斜坡以防积雪压塌。主干道宽阔，铺有防滑灰石，两侧商铺毗邻，城中终日炉烟袅袅，是整个玄北国最热闹的地方。',
+                            description: '凛京建于一处相对平坦的山腰台地之上，四周以十丈高的玄铁城墙围合，城墙上常年结有冰晶，反光如镜。城内建筑多以黑石为基、雪松为梁，屋顶皆有特制的斜坡以防积雪压塌。主干道宽阔，铺有防滑灰石，两侧商铺毗邻，城中终日炉烟袅袅，是整个玄北国最热闹的地方。',
                             features: ['玄铁城墙', '黑石建筑', '雪松梁', '斜坡屋顶', '防滑灰石主干道', '商铺毗邻'],
                             sub_locations: [
                                 {
@@ -2735,20 +3062,1340 @@ const staticData = {
                     slug: 'xicha',
                     name: '西刹国',
                     region_type: 'country',
-                    description: '于迷雾森林中央立国，木系法术为根基，与外称男女平等。',
-                    geography: '迷雾森林',
-                    climate: '湿润多雾',
-                    politics: '表面男女平等'
+                    description: '西刹国建于迷雾森林中央，以木系法术为立国根基，男女平等。国土四面被极其广阔的迷雾森林所环绕，常年雾气弥漫，通灵野兽众多，使外人难以进出——唯有满月之夜迷雾散去，外人方可在西刹国人的引路下穿越森林。',
+                    geography: '森林中央平地立国，四面被迷雾森林环绕，满月时雾散，平日外人无法独自进出',
+                    climate: '常年雾气弥漫，湿润多雾，唯有满月之夜迷雾散去',
+                    politics: '男女平等；篡位后政局不稳，现国君以前丞相身份登基，朝中暗流涌动',
+                    economy: '木材、草药、林产品为主要出口，镇檀街以武器贩卖著称，亦有少量妖域商人隐身于此',
+                    transportation: '城区间以林间栈道相连，国内亦有水系河道辅助运输，满月期间有专门的向导队伍带领外人出入',
+                    culture: '男女平等',
+                    magic_system: '木系法术为主流，与迷雾森林中的通灵野兽有天然亲近感，驭兽之术在西刹国极受重视',
+                    secret_forces: '七刹卫：听命于金吾卫，现国君接任后重新编制',
+                    locations: [
+                        {
+                            id: 201,
+                            slug: 'cangwucheng',
+                            name: '苍梧城',
+                            location_type: 'city',
+                            description: '苍梧城建于迷雾森林最开阔的一片林中平地，城内古木参天，建筑皆以巨木为柱、藤蔓为饰，屋顶覆以厚实苔草，与周遭森林浑然一体。主干道以夯实泥土与木板铺就，两侧树木保留原状，商铺便在树根之间开设，远望之如同森林自己生长出的城市。宫城上换了新旗，然苍梧城的百姓大多沉默，街头气氛与昔日相比多了几分压抑。',
+                            sub_locations: [
+                                {
+                                    id: 20101,
+                                    slug: 'canghua-gongcheng',
+                                    name: '皇城（苍华宫城）',
+                                    location_type: 'palace',
+                                    description: '位于苍梧城正中，以高大活木围合成天然宫墙，宫墙外侧缠绕藤蔓，内侧以符阵加固。宫城建筑以千年古木为骨架，屋顶覆满苍翠，远望之如同一片林中高地。篡位后现国君对宫城进行了局部改建，原监兵神君的居所被封闭，另辟新殿。',
+                                    sub_locations: [
+                                        {
+                                            id: 2010101,
+                                            slug: 'muhua-dian',
+                                            name: '木华殿',
+                                            location_type: 'hall',
+                                            description: '朝堂所在，国君每逢朝日于此听政，殿内以巨木为柱，自然光线透过树冠洒落'
+                                        },
+                                        {
+                                            id: 2010102,
+                                            slug: 'cangcui-gong',
+                                            name: '苍翠宫',
+                                            location_type: 'palace',
+                                            description: '国君寝宫，外人不得踏足'
+                                        },
+                                        {
+                                            id: 2010103,
+                                            slug: 'fenglin-dian',
+                                            name: '封林殿',
+                                            location_type: 'hall',
+                                            description: '目前以封条与符阵封闭'
+                                        },
+                                        {
+                                            id: 2010104,
+                                            slug: 'neige-guanshu',
+                                            name: '内阁官署',
+                                            location_type: 'hall',
+                                            description: '内阁大学士处理政务之所，紧邻木华殿两翼，是现任政权的行政核心'
+                                        },
+                                        {
+                                            id: 2010105,
+                                            slug: 'jinweiweishi',
+                                            name: '锦衣卫司',
+                                            location_type: 'hall',
+                                            description: '宫城东侧独立建筑，锦衣卫指挥使驻地，兼为国君的情报与审讯中枢'
+                                        },
+                                        {
+                                            id: 2010106,
+                                            slug: 'houhuayuan',
+                                            name: '后花园',
+                                            location_type: 'garden',
+                                            description: '宫城西侧大型园林，林木葱郁，现封闭不对外开放'
+                                        },
+                                        {
+                                            id: 2010107,
+                                            slug: 'neiku',
+                                            name: '内库',
+                                            location_type: 'treasury',
+                                            description: '皇室财货存放之所'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 20102,
+                                    slug: 'neicheng',
+                                    name: '内城',
+                                    location_type: 'district',
+                                    description: '皇城之外第一圈，原为贵族与旧臣宅邸集中地。篡位后部分旧臣宅邸易主，新贵涌入，内城格局表面未变，实则人心已换。街道以青石与木板混铺，两侧古树成荫，树上常有信鸦停歇——那是旧臣之间秘密传信的惯用方式。',
+                                    sub_locations: [
+                                        {
+                                            id: 2010201,
+                                            slug: 'cangwu-yudao',
+                                            name: '苍梧御道',
+                                            location_type: 'street',
+                                            description: '正对木华殿宫门的礼仪主轴'
+                                        },
+                                        {
+                                            id: 2010202,
+                                            slug: 'zhuxin-xiang',
+                                            name: '朱樨巷',
+                                            location_type: 'district',
+                                            description: '贵族与高官宅邸集中地'
+                                        },
+                                        {
+                                            id: 2010203,
+                                            slug: 'linfeng-fang',
+                                            name: '林风坊',
+                                            location_type: 'district',
+                                            description: '内城商业区，售卖高端木器、名贵药材、定制兵器，非寻常百姓消费之地'
+                                        },
+                                        {
+                                            id: 2010204,
+                                            slug: 'wanglin-tai',
+                                            name: '望林台',
+                                            location_type: 'tower',
+                                            description: '内城制高点，可俯瞰苍梧城全貌，亦可遥望迷雾森林方向'
+                                        },
+                                        {
+                                            id: 2010205,
+                                            slug: 'duchayuan',
+                                            name: '都察院',
+                                            location_type: 'hall',
+                                            description: '设左右都御史'
+                                        },
+                                        {
+                                            id: 2010206,
+                                            slug: 'taiyishu',
+                                            name: '太医署',
+                                            location_type: 'hall',
+                                            description: '皇室与贵族专属医馆，精通木系医术与草药配制'
+                                        },
+                                        {
+                                            id: 2010207,
+                                            slug: 'xunjiansi',
+                                            name: '巡检司',
+                                            location_type: 'hall',
+                                            description: '内城治安机构'
+                                        },
+                                        {
+                                            id: 2010208,
+                                            slug: 'xiangdaoshi',
+                                            name: '向导司',
+                                            location_type: 'hall',
+                                            description: '专职管理满月期间的出入境引导事务，亦统筹外来人员登记'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 20103,
+                                    slug: 'waicheng',
+                                    name: '外城',
+                                    location_type: 'district',
+                                    description: '内城之外、城郊林区之内，是苍梧城最热闹的区域。普通百姓，商贩、匠人、猎人皆聚于此。外城氛围相对自由，篡位带来的压抑感在此较内城稍淡，但锦衣卫的眼线亦渗入各处茶馆酒肆之中。',
+                                    sub_locations: [
+                                        {
+                                            id: 2010301,
+                                            slug: 'zhentan-jie',
+                                            name: '镇檀街',
+                                            location_type: 'street',
+                                            description: '位于外城核心商业街，紧邻城郊林区，以武器贩卖为主，兼有综合商铺。西刹国官方商业街，少数妖域人隐身于此售卖，治安尚可。',
+                                            sub_locations: [
+                                                {
+                                                    id: 201030101,
+                                                    slug: 'jiaduan-beiduan',
+                                                    name: '【甲段·北端】',
+                                                    location_type: 'district',
+                                                    description: '精制兵器与法器区',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 20103010101,
+                                                            slug: 'cangmu-binghang',
+                                                            name: '苍木兵行（总号）',
+                                                            location_type: 'shop',
+                                                            description: '主营顶级木系法器、精制长弓及灵木短剑，是西刹国最老字号的兵器行，供货宫廷。'
+                                                        },
+                                                        {
+                                                            id: 20103010102,
+                                                            slug: 'tiegupu',
+                                                            name: '铁骨铺',
+                                                            location_type: 'shop',
+                                                            description: '主营精锻刀剑、枪戟矛戈，为铁匠世家传承，所出刀剑以耐用著称'
+                                                        },
+                                                        {
+                                                            id: 20103010103,
+                                                            slug: 'tengjia-fang',
+                                                            name: '藤甲坊',
+                                                            location_type: 'shop',
+                                                            description: '主营藤编护甲、皮革护具及盾牌，以迷雾森林特有藤材制成，轻便且具备一定法阵防护。'
+                                                        },
+                                                        {
+                                                            id: 20103010104,
+                                                            slug: 'fuqige',
+                                                            name: '符器阁',
+                                                            location_type: 'shop',
+                                                            description: '主营法阵符文兵器及封印器具，兼售攻击与防御类符器，来历颇为复杂'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    id: 201030102,
+                                                    slug: 'yiduan-zhongbei',
+                                                    name: '【乙段·中北】',
+                                                    location_type: 'district',
+                                                    description: '中端兵器与猎具区',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 20103010201,
+                                                            slug: 'liefeng-pu',
+                                                            name: '猎风铺',
+                                                            location_type: 'shop',
+                                                            description: '主营各类猎具、陷阱及捕兽夹，是猎人行会指定供货点，价格实惠，货品实用。'
+                                                        },
+                                                        {
+                                                            id: 20103010202,
+                                                            slug: 'gongshi-fang',
+                                                            name: '弓矢坊',
+                                                            location_type: 'shop',
+                                                            description: '主营弓箭、弩机及箭矢批发，以灵木为弓臂，射程远，是西刹国猎人的标配。'
+                                                        },
+                                                        {
+                                                            id: 20103010203,
+                                                            slug: 'xiushan-pu',
+                                                            name: '修缮铺',
+                                                            location_type: 'shop',
+                                                            description: '主营兵器修缮、护具翻新及刀剑开刃，手艺扎实，价格公道，是镇檀街人气最旺的铺子之一。'
+                                                        },
+                                                        {
+                                                            id: 20103010204,
+                                                            slug: 'shouya-pu',
+                                                            name: '兽牙铺',
+                                                            location_type: 'shop',
+                                                            description: '主营兽牙、兽骨及爪牙制品，猎人行会在此收购生料，亦零售成品饰物与小型武器。'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    id: 201030103,
+                                                    slug: 'bingduan-zhongduan',
+                                                    name: '【丙段·中段】',
+                                                    location_type: 'district',
+                                                    description: '综合商业与娱乐区（核心地带）',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 20103010301,
+                                                            slug: 'tingfenlou-fenchang',
+                                                            name: '听风楼（分场）',
+                                                            location_type: 'theater',
+                                                            description: '设有小型戏台，上演说书与歌舞，与外城听风楼同名，规模较小，现国君偶尔微服至此。'
+                                                        },
+                                                        {
+                                                            id: 20103010302,
+                                                            slug: 'qihuozhai',
+                                                            name: '奇货斋',
+                                                            location_type: 'shop',
+                                                            description: '售卖来历不明的异域货品与兵器，疑有妖域商人暗中经营，货品种类奇特，不问出处。'
+                                                        },
+                                                        {
+                                                            id: 20103010303,
+                                                            slug: 'chaguan',
+                                                            name: '茶馆（数间）',
+                                                            location_type: 'shop',
+                                                            description: '提供饮茶、说书及棋弈，是消息流通之地，旧臣与新贵皆有常客，各间茶馆掌柜各有立场。'
+                                                        },
+                                                        {
+                                                            id: 20103010304,
+                                                            slug: 'wenmo-pu',
+                                                            name: '文墨铺',
+                                                            location_type: 'shop',
+                                                            description: '主营笔墨纸砚、地图及向导路线图，兼代写书信，满月期间售卖迷雾森林出入指引图。'
+                                                        },
+                                                        {
+                                                            id: 20103010305,
+                                                            slug: 'yaopu',
+                                                            name: '药铺',
+                                                            location_type: 'shop',
+                                                            description: '主营草药、伤药及解毒药，以战伤用药为特色，兼售毒草类药材，是镇檀街必备配套。'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    id: 201030104,
+                                                    slug: 'dingduan-zhongnan',
+                                                    name: '【丁段·中南】',
+                                                    location_type: 'district',
+                                                    description: '生活用品与食货区',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 20103010401,
+                                                            slug: 'linwei-zhai',
+                                                            name: '林味斋',
+                                                            location_type: 'shop',
+                                                            description: '主营林中猎物肉食、菌菇干货及野果酿酒，是西刹国特色食材，外地商人常来批货。'
+                                                        },
+                                                        {
+                                                            id: 20103010402,
+                                                            slug: 'muqi-pu',
+                                                            name: '木器铺',
+                                                            location_type: 'shop',
+                                                            description: '主营家用木器、农具及雕刻摆件，是匠人弄作坊的对外销售点，亦承接订制。'
+                                                        },
+                                                        {
+                                                            id: 20103010403,
+                                                            slug: 'xiangliao-pu',
+                                                            name: '香料铺',
+                                                            location_type: 'shop',
+                                                            description: '主营草木香料、薰香及驱虫药包，以迷雾森林特有香料制成，传说可短暂迷惑野兽。'
+                                                        },
+                                                        {
+                                                            id: 20103010404,
+                                                            slug: 'shisi-jiange',
+                                                            name: '食肆数间',
+                                                            location_type: 'shop',
+                                                            description: '供应西刹国特色林间料理、烤肉及药膳，以林中食材为主料，风味独特，猎人与旅人皆爱。'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    id: 201030105,
+                                                    slug: 'wuduan-nanduan',
+                                                    name: '【戊段·南端】',
+                                                    location_type: 'district',
+                                                    description: '旅人服务区（近城郊林区入口）',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 20103010501,
+                                                            slug: 'daoxiang-hang',
+                                                            name: '向导行',
+                                                            location_type: 'shop',
+                                                            description: '满月期间提供出入迷雾森林的向导服务，由向导司授权经营，价格统一，满月前三日起接受预约。'
+                                                        },
+                                                        {
+                                                            id: 20103010502,
+                                                            slug: 'huanqianzhuang',
+                                                            name: '换钱庄',
+                                                            location_type: 'shop',
+                                                            description: '主营各界货币兑换及贵重物品寄存，是满月期间外来人员必经之地，兼收购迷雾森林特产。'
+                                                        },
+                                                        {
+                                                            id: 20103010503,
+                                                            slug: 'bujipù',
+                                                            name: '补给铺',
+                                                            location_type: 'shop',
+                                                            description: '主营干粮、水囊、绳索、火折子等户外补给，专为进出迷雾森林的旅人备货，另售防迷透气味的特制药包。'
+                                                        },
+                                                        {
+                                                            id: 20103010504,
+                                                            slug: 'lüren-kezhan',
+                                                            name: '旅人客栈（数家）',
+                                                            location_type: 'inn',
+                                                            description: '提供简单住宿，满月期间可寄存行李。满月前后客满，平日冷清，部分掌柜是向导司的消息来源。'
+                                                        },
+                                                        {
+                                                            id: 20103010505,
+                                                            slug: 'lingshou-jicunzhu',
+                                                            name: '灵兽寄存处',
+                                                            location_type: 'shop',
+                                                            description: '代为照料旅人坐骑或灵兽，不接受野性未驯的迷雾森林兽类，有专人看护。'
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            id: 2010302,
+                                            slug: 'mu-shi',
+                                            name: '木市',
+                                            location_type: 'market',
+                                            description: '位于外城东侧，每日辰时开市，是木材、藤条、竹料的原料市集。猎人与伐木工的集散地，气味混杂，热闹非常。'
+                                        },
+                                        {
+                                            id: 2010303,
+                                            slug: 'caoyao-fang',
+                                            name: '草药坊',
+                                            location_type: 'market',
+                                            description: '位于外城中段，靠近林区边界，各类草药、毒草、灵植交易区。'
+                                        },
+                                        {
+                                            id: 2010304,
+                                            slug: 'zuilin-fang',
+                                            name: '醉林坊',
+                                            location_type: 'district',
+                                            description: '位于外城西侧，食肆、酒馆、茶肆连排。旧臣与新贵皆有常客，是城中消息流通最快的地方。'
+                                        },
+                                        {
+                                            id: 2010305,
+                                            slug: 'xiaofeng-jie',
+                                            name: '晓风街',
+                                            location_type: 'street',
+                                            description: '位于外城南端，近城郊林区入口，汇集杂货、旧物、民间药铺。满月期间向导队伍在此集合，平日亦有摊贩售卖迷雾森林的采集品。'
+                                        },
+                                        {
+                                            id: 2010306,
+                                            slug: 'jiangren-long',
+                                            name: '匠人弄',
+                                            location_type: 'district',
+                                            description: '位于外城北侧，以木器、藤编、兽皮制品作坊为主，是镇檀街兵器的部分原材料产地，以男性匠人为主。'
+                                        },
+                                        {
+                                            id: 2010307,
+                                            slug: 'cangwu-yiguan',
+                                            name: '苍梧驿馆',
+                                            location_type: 'inn',
+                                            description: '官办接待场所，满月期间外来访客集中入住，平日冷清，驿馆掌柜为向导司线人'
+                                        },
+                                        {
+                                            id: 2010308,
+                                            slug: 'tingfeng-lou',
+                                            name: '戏楼（听风楼）',
+                                            location_type: 'theater',
+                                            description: '苍梧城最大的戏楼，现国君是这里的常客，偶尔微服至此听戏，官配戏言据说与此地有渊源'
+                                        },
+                                        {
+                                            id: 2010309,
+                                            slug: 'xiange-jianzhu',
+                                            name: '弦歌客栈',
+                                            location_type: 'inn',
+                                            description: '外城规模最大的私营客栈兼酒楼，两层，二楼雅间是旧臣秘密聚会的场所之一'
+                                        },
+                                        {
+                                            id: 2010310,
+                                            slug: 'cangwu-xuetang',
+                                            name: '苍梧学堂',
+                                            location_type: 'school',
+                                            description: '官办学堂，原监兵神君时期男女同招，现国君接任后悄然将女童比例压缩'
+                                        },
+                                        {
+                                            id: 2010311,
+                                            slug: 'linshen-miao',
+                                            name: '林神庙',
+                                            location_type: 'temple',
+                                            description: '供奉西刹国守护林神，香火极盛，据说监兵神君退位前曾在此独坐一夜'
+                                        },
+                                        {
+                                            id: 2010312,
+                                            slug: 'chengjiao-linqurukou',
+                                            name: '城郊林区入口',
+                                            location_type: 'gate',
+                                            description: '外城与迷雾森林之间的缓冲地带，满月夜此处是进出森林的必经点，平日禁止通行'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 20104,
+                                    slug: 'chengjiao-linqu',
+                                    name: '城郊林区',
+                                    location_type: 'district',
+                                    description: '苍梧城外城与迷雾森林之间存在一片过渡性林区，树木较迷雾森林稀疏，迷雾亦较淡，是城内居民日常采集与猎人活动的主要区域。篡位后现国君在此布置了额外的巡逻队伍，名为防范野兽，实为监控是否有人秘密出入迷雾森林深处。',
+                                    sub_locations: [
+                                        {
+                                            id: 2010401,
+                                            slug: 'lieren-yingdi',
+                                            name: '猎人营地',
+                                            location_type: 'camp',
+                                            description: '城郊林区最大的固定聚落，猎人行会驻地，承接猎兽委托，兼收购兽皮与兽骨'
+                                        },
+                                        {
+                                            id: 2010402,
+                                            slug: 'caiyao-zhan',
+                                            name: '采药站',
+                                            location_type: 'camp',
+                                            description: '数处草药采集点，由草药坊定期派人收购，溟安门弟子有时在此设临时驻点'
+                                        },
+                                        {
+                                            id: 2010403,
+                                            slug: 'linqu-suosuo',
+                                            name: '林区哨所',
+                                            location_type: 'tower',
+                                            description: '篡位后新设，数处巡逻哨所分布于林区边界，名为安保，实为监视'
+                                        },
+                                        {
+                                            id: 2010404,
+                                            slug: 'jiujitai',
+                                            name: '旧祭台',
+                                            location_type: 'altar',
+                                            description: '监兵神君时期的林中祭台，现已荒废，据传满月之夜有人在此留香，但无人知晓是谁'
+                                        },
+                                        {
+                                            id: 2010405,
+                                            slug: 'daoxiang-jihe Dian',
+                                            name: '向导集合点',
+                                            location_type: 'point',
+                                            description: '满月期间外来人员等候向导的指定地点，由向导司统一管理'
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 202,
+                            slug: 'muyuancheng',
+                            name: '木渊城',
+                            location_type: 'city',
+                            description: '距苍梧城约半日栈道路程，建于一片古木最为密集的林中平地。城区以木材采伐与初加工为核心产业，同时有大量藤编与木器作坊，是镇檀街兵器用料与苍梧城建材的主要供货地。城内常年弥漫木屑与树脂的气味。',
+                            sub_locations: [
+                                {
+                                    id: 20201,
+                                    slug: 'muliao-jie',
+                                    name: '木料街',
+                                    location_type: 'street',
+                                    description: '沿采伐区分布的原料交易街，辰时最旺'
+                                },
+                                {
+                                    id: 20202,
+                                    slug: 'muyuan-caifachang',
+                                    name: '木渊采伐场',
+                                    location_type: 'camp',
+                                    description: '官营采伐场，负责采伐木材'
+                                },
+                                {
+                                    id: 20203,
+                                    slug: 'muqi-zuofang',
+                                    name: '木器作坊',
+                                    location_type: 'workshop',
+                                    description: '数十间木器加工作坊'
+                                },
+                                {
+                                    id: 20204,
+                                    slug: 'fagong-hanghui',
+                                    name: '伐木工行会',
+                                    location_type: 'hall',
+                                    description: '伐木工行业公会驻地'
+                                },
+                                {
+                                    id: 20205,
+                                    slug: 'jianyi-yiliaosuo',
+                                    name: '简易医疗所',
+                                    location_type: 'hall',
+                                    description: '为伐木工提供基础医疗服务'
+                                },
+                                {
+                                    id: 20206,
+                                    slug: 'qiannian-gumulin',
+                                    name: '千年古木林',
+                                    location_type: 'forest',
+                                    description: '城区深处有一片「千年古木林」，树龄均逾千年，当地人视为禁地，从不采伐'
+                                }
+                            ]
+                        },
+                        {
+                            id: 203,
+                            slug: 'youhuangcheng',
+                            name: '幽篁城',
+                            location_type: 'city',
+                            description: '位于苍梧城南方，毗邻迷雾森林中草药最为丰富的一片区域。城区以草药种植与毒草研究为核心，是西刹国最重要的药材产地，同时也是木系医术修士的主要聚居地。溟安门弟子与沁雨阁弟子皆与此城有往来。',
+                            sub_locations: [
+                                {
+                                    id: 20301,
+                                    slug: 'yaoshi-jie',
+                                    name: '药市街',
+                                    location_type: 'street',
+                                    description: '草药、毒草、药种的批发交易街'
+                                },
+                                {
+                                    id: 20302,
+                                    slug: 'youhuang-yaoyuan',
+                                    name: '幽篁药园',
+                                    location_type: 'farm',
+                                    description: '官营药园，负责草药种植与培育'
+                                },
+                                {
+                                    id: 20303,
+                                    slug: 'ducao-yanjiufang',
+                                    name: '毒草研究坊',
+                                    location_type: 'workshop',
+                                    description: '毒草研究机构，负责毒草的培育与研究'
+                                },
+                                {
+                                    id: 20304,
+                                    slug: 'muxi-yiguan',
+                                    name: '木系医馆',
+                                    location_type: 'hall',
+                                    description: '木系医术医馆，提供医疗服务'
+                                },
+                                {
+                                    id: 20305,
+                                    slug: 'caoyao-xuetang',
+                                    name: '草药学堂',
+                                    location_type: 'school',
+                                    description: '传授草药知识的学堂'
+                                }
+                            ]
+                        },
+                        {
+                            id: 204,
+                            slug: 'cangmingcheng',
+                            name: '苍鸣城',
+                            location_type: 'city',
+                            description: '位于苍梧城西方，是西刹国最主要的军事城区，大将军军队的主要驻扎地。篡位后大将军名义上仍统辖此城，但现国君已在城中安插了数名亲信将领，暗中分散大将军的兵权。城区气氛严肃，军纪森严，是苍梧城以外最难自由进出的城区。',
+                            sub_locations: [
+                                {
+                                    id: 20401,
+                                    slug: 'junshi-jie',
+                                    name: '军市街',
+                                    location_type: 'street',
+                                    description: '驻军城区外侧的补给街，兵器、军粮、药包为主'
+                                },
+                                {
+                                    id: 20402,
+                                    slug: 'dajiangjun-fu',
+                                    name: '大将军府',
+                                    location_type: 'hall',
+                                    description: '大将军名义上的驻地'
+                                },
+                                {
+                                    id: 20403,
+                                    slug: 'xijing-shoubeiying',
+                                    name: '西境守备营',
+                                    location_type: 'camp',
+                                    description: '西境守备军队驻扎地'
+                                },
+                                {
+                                    id: 20404,
+                                    slug: 'junxie-ku',
+                                    name: '军械库',
+                                    location_type: 'warehouse',
+                                    description: '储存兵器与军需物资'
+                                },
+                                {
+                                    id: 20405,
+                                    slug: 'junyi-suo',
+                                    name: '军医所',
+                                    location_type: 'hall',
+                                    description: '为驻军提供医疗服务'
+                                },
+                                {
+                                    id: 20406,
+                                    slug: 'wangwu-tai',
+                                    name: '望雾台',
+                                    location_type: 'tower',
+                                    description: '城区最高处，可遥望迷雾森林西侧边界，大将军有时独坐于此'
+                                }
+                            ]
+                        },
+                        {
+                            id: 205,
+                            slug: 'linzecheng',
+                            name: '霖泽城',
+                            location_type: 'city',
+                            description: '西刹国唯一以农业为主要产业的城区，位于苍梧城北方一片有天然水系流经的林中盆地。城区依水而建，河道两岸辟有田地，是西刹国粮食的主要来源。同时因水系充沛，城内亦有不少水系修士定居，与木系修士和谐共处。',
+                            sub_locations: [
+                                {
+                                    id: 20501,
+                                    slug: 'zeshi-jie',
+                                    name: '泽市街',
+                                    location_type: 'street',
+                                    description: '粮食、水产、灵草的集散地'
+                                },
+                                {
+                                    id: 20502,
+                                    slug: 'linze-liangcang',
+                                    name: '霖泽粮仓',
+                                    location_type: 'warehouse',
+                                    description: '官营粮仓，负责储存粮食'
+                                },
+                                {
+                                    id: 20503,
+                                    slug: 'shuixi-xiulianchang',
+                                    name: '水系修炼场',
+                                    location_type: 'hall',
+                                    description: '水系修士修炼场所'
+                                },
+                                {
+                                    id: 20504,
+                                    slug: 'guanqusi',
+                                    name: '灌渠司',
+                                    location_type: 'hall',
+                                    description: '负责农田水利的机构'
+                                },
+                                {
+                                    id: 20505,
+                                    slug: 'jianyi-dutou',
+                                    name: '简易渡头',
+                                    location_type: 'port',
+                                    description: '简易渡口，供船只停靠'
+                                },
+                                {
+                                    id: 20506,
+                                    slug: 'bitan',
+                                    name: '碧潭',
+                                    location_type: 'lake',
+                                    description: '城区内「碧潭」，潭水极深，水色碧绿，传说潭底有上古水兽沉眠，当地人从不在潭中捕鱼'
+                                }
+                            ]
+                        },
+                        {
+                            id: 206,
+                            slug: 'miwu-senlin',
+                            name: '迷雾森林',
+                            location_type: 'forest',
+                            description: '迷雾森林极其广阔，完整环绕整个西刹国，常年迷雾弥漫，通灵野兽众多，是西刹国天然的屏障。对于外人而言，迷雾森林是危险与神秘并存的禁地；对于西刹国人而言，它是故土的一部分，是与野兽共生的家园。',
+                            sub_locations: [
+                                {
+                                    id: 20601,
+                                    slug: 'baihu-shitai',
+                                    name: '白虎石台',
+                                    location_type: 'landmark',
+                                    description: '森林最深处一处天然巨石台地'
+                                },
+                                {
+                                    id: 20602,
+                                    slug: 'guteng-migong',
+                                    name: '古藤迷宫',
+                                    location_type: 'landmark',
+                                    description: '一片古藤相互缠绕形成的天然迷宫，即便是熟悉森林的向导也从不轻易进入'
+                                },
+                                {
+                                    id: 20603,
+                                    slug: 'wuzhong-ci',
+                                    name: '雾中祠',
+                                    location_type: 'temple',
+                                    description: '森林中段一座无名小祠，供奉对象不明，香火却常年不断，无人知晓是谁在维护'
+                                },
+                                {
+                                    id: 20604,
+                                    slug: 'tonglingshou-chao',
+                                    name: '通灵兽巢',
+                                    location_type: 'landmark',
+                                    description: '数处大型通灵兽的聚居地，溟安门弟子将其视为秘密驯兽场所之一'
+                                }
+                            ]
+                        }
+                    ]
                 },
                 {
                     id: 3,
                     slug: 'donglan',
                     name: '东澜国',
                     region_type: 'country',
-                    description: '建于滨海之地，气候四季分明。',
-                    geography: '滨海之地',
-                    climate: '四季分明',
-                    politics: '女尊男卑'
+                    description: '东澜国建于滨海之地，气候四季分明，国土濒临广阔海域，港口密布，以贸易立国。国人自幼习水，御水之术了得，水系法术为东澜国的根基战力。国内奉行女尊男卑，于孟章神君的治理下愈发繁荣，是人间三国中经济最为发达的一个。',
+                    geography: '滨海平原为主，内陆有丘陵，河网密布，港口遍布沿海',
+                    climate: '四季分明，夏热冬温',
+                    politics: '女尊男卑，孟章神君即国君亲自执政，以凡人身份示人，每隔十五万岁「陨落」后重新登基',
+                    economy: '港口贸易为支柱，雕虞街以装饰品闻名，每逢潮汐节（东澜国最大年节）会举行装饰品竞展，全街挂满彩灯与贝串，是溟都最壮观的景象。另出产海货、丝绸、染料、香料等',
+                    transportation: '以海路与河运为主，陆路辅助，港口是最重要的交通枢纽，商船往来频繁',
+                    culture: '女尊男卑，女性掌官职、主商贸，男性多居辅助角色；另设圣女一职，主持国家祭祀',
+                    magic_system: '水系法术为主流，国人自幼习练，水系修士于东澜国地位极高',
+                    secret_forces: '七星使：国君专属暗卫，非危机时刻不轻易出动；禁军：守卫宫廷',
+                    locations: [
+                        {
+                            id: 301,
+                            slug: 'mingdu',
+                            name: '溟都',
+                            location_type: 'city',
+                            description: '溟都坐落于东澜国最宽阔的海湾之畔，三面环水，一面依丘。城内以白石与青瓦为主要建材，临海一侧建有长达数里的石砌海堤，堤上常年有渔妇与商贩往来。城区由内而外分为四重：皇城、内城、外城、港口区，各重之间以宽阔石道相连，城内水渠纵横，小舟可直抵市集码头。',
+                            sub_locations: [
+                                {
+                                    id: 30101,
+                                    slug: 'biyuan-gongcheng',
+                                    name: '皇城（碧渊宫城）',
+                                    description: '溟都正中偏北，以三丈高的白石宫墙围合，宫墙外侧绕有宽约一丈的护城河，河水引自内陆活泉，终年不断。宫城建筑以白玉石与青釉瓦为主，宫门前立有双鱼石雕，象征水神庇佑，是东澜国最重要的礼仪性建筑群。',
+                                    sub_locations: [
+                                        {
+                                            id: 3010101,
+                                            slug: 'biyuan-dian',
+                                            name: '碧渊殿',
+                                            description: '朝堂所在，孟章神君每逢朝日于此听政，殿内以水晶柱为饰，光线折射如波光粼粼'
+                                        },
+                                        {
+                                            id: 3010102,
+                                            slug: 'chaoyin-gong',
+                                            name: '潮音宫',
+                                            description: '国君寝宫，建于宫城最高台地，可俯瞰整片海湾，外人不得踏足'
+                                        },
+                                        {
+                                            id: 3010103,
+                                            slug: 'sansheng-guanshu',
+                                            name: '三省官署',
+                                            description: '中书省、门下省、尚书省各自设署，位于碧渊殿两翼，是行政核心区'
+                                        },
+                                        {
+                                            id: 3010104,
+                                            slug: 'shengnu-jitan',
+                                            name: '圣女祭坛',
+                                            description: '宫城东侧独立围合的祭祀区域，由圣女主持，非祭祀日期间封闭，气氛庄严肃穆'
+                                        },
+                                        {
+                                            id: 3010105,
+                                            slug: 'qixing-ge',
+                                            name: '七星阁',
+                                            description: '宫城地下层，七星使驻地，除孟章神君外无人知晓其确切位置'
+                                        },
+                                        {
+                                            id: 3010106,
+                                            slug: 'neiku',
+                                            name: '内库',
+                                            description: '皇室财货、典籍、珍宝存放之所，由内库总管负责，有水系法阵封护'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 30102,
+                                    slug: 'neicheng',
+                                    name: '内城',
+                                    description: '皇城之外第一圈，居住着贵族、高阶官员、富商与圣女家族。街道以青石板铺就，两侧种植常绿乔木，城内水渠清澈，家家户户门前可停靠小舟。内城整体风貌雅致，是溟都最体面的居住地带。',
+                                    sub_locations: [
+                                        {
+                                            id: 3010201,
+                                            slug: 'chaofeng-jie',
+                                            name: '朝凤街',
+                                            description: '对准碧渊殿宫门的礼仪主轴，每逢大典有仪仗行列，两侧种植高大棕榈'
+                                        },
+                                        {
+                                            id: 3010202,
+                                            slug: 'zhucui-xiang',
+                                            name: '珠翠巷',
+                                            description: '贵族与世家府邸集中地，宅门皆临水渠，有私家渡头供小舟停靠'
+                                        },
+                                        {
+                                            id: 3010203,
+                                            slug: 'yuzhang-fang',
+                                            name: '玉璋坊',
+                                            description: '内城商业区，售卖高端珠宝、定制服饰、名贵香料，非寻常百姓消费之地'
+                                        },
+                                        {
+                                            id: 3010204,
+                                            slug: 'guanchao-tai',
+                                            name: '观潮台',
+                                            description: '内城最高处的观景平台，晴日可望见外海，是贵族赏日出的胜地，建有茶亭数座'
+                                        },
+                                        {
+                                            id: 3010205,
+                                            slug: 'shengnu-fang',
+                                            name: '圣女坊',
+                                            description: '圣女家族居住区，独立成坊，外人非邀请不得擅入，坊内常有祭祀香烟飘散'
+                                        },
+                                        {
+                                            id: 3010206,
+                                            slug: 'honglusi',
+                                            name: '鸿胪寺',
+                                            description: '掌外交与民族事务，对应典客之职，接待各国来使，亦统筹海外贸易谈判'
+                                        },
+                                        {
+                                            id: 3010207,
+                                            slug: 'taiyishu',
+                                            name: '太医署',
+                                            description: '皇室与贵族专属医馆，精通水系医术，兼研海中药材'
+                                        },
+                                        {
+                                            id: 3010208,
+                                            slug: 'xunjiansi',
+                                            name: '巡检司',
+                                            description: '内城治安机构，由女性官员主导，负责巡逻与民事纠纷处置'
+                                        },
+                                        {
+                                            id: 3010209,
+                                            slug: 'shuiwensi',
+                                            name: '水文司',
+                                            description: '专职监测潮汐、风向、海情，为港口商船提供航行预报，每日发布水文简报'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 30103,
+                                    slug: 'waicheng',
+                                    name: '外城',
+                                    description: '内城之外、城墙之内，是溟都人口最密集的区域，普通百姓、商贩、渔民、匠人皆聚于此。外城紧邻港口区，人流最为旺盛，食肆与摊贩从清晨便开张，叫卖声终日不断。',
+                                    sub_locations: [
+                                        {
+                                            id: 3010301,
+                                            slug: 'diaoyu-jie',
+                                            name: '雕虞街',
+                                            description: '位于外城核心商业街，紧邻港口区，街道两旁以手镯、发簪等装饰品店铺为主，亦有综合商铺。此处为东澜国官方商业街，少数妖域人隐藏身份于此售卖。',
+                                            sub_locations: [
+                                                {
+                                                    id: 301030101,
+                                                    slug: 'chaoyin-xilou',
+                                                    name: '潮音戏楼',
+                                                    description: '溟都最大的戏楼，常年有戏班驻场，国君偶尔微服至此，是城内重要的娱乐场所'
+                                                },
+                                                {
+                                                    id: 301030102,
+                                                    slug: 'jiaduan-beiduan',
+                                                    name: '【甲段·北端】',
+                                                    description: '珠宝与高端装饰区',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 30103010201,
+                                                            slug: 'canglan-zhuhang',
+                                                            name: '沧澜珠行（总号）',
+                                                            description: '专营顶级海珠、珊瑚及宝石首饰，东澜国最老字号的珠宝行，常年供货皇室，非贵族难以承担其价。'
+                                                        },
+                                                        {
+                                                            id: 30103010202,
+                                                            slug: 'cuiyu-fang',
+                                                            name: '翠羽坊',
+                                                            description: '主营翡翠、玉石发簪及手镯，玉料多采自内陆山区，工艺精细，常有贵族前来定制。'
+                                                        },
+                                                        {
+                                                            id: 30103010203,
+                                                            slug: 'luodian-ge',
+                                                            name: '螺钿阁',
+                                                            description: '专营螺钿镶嵌工艺品及漆器摆件，将海螺贝壳研磨镶嵌于漆器之上，是东澜独有的工艺。'
+                                                        },
+                                                        {
+                                                            id: 30103010204,
+                                                            slug: 'jinsi-pu',
+                                                            name: '金丝铺',
+                                                            description: '专营金银丝编织首饰，全程纯手工编织，极耗时日，价格极贵，常年供不应求'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    id: 301030103,
+                                                    slug: 'yiduan-zhongbei',
+                                                    name: '【乙段·中北】',
+                                                    description: '中端装饰与布料区',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 30103010301,
+                                                            slug: 'beizhu-fang',
+                                                            name: '贝珠坊',
+                                                            description: '主营贝珠串、贝壳饰品及海货装饰，价格亲民，是外城百姓最常光顾的装饰品铺。'
+                                                        },
+                                                        {
+                                                            id: 30103010302,
+                                                            slug: 'jinyun-xiuzhuang',
+                                                            name: '锦云绣庄',
+                                                            description: '主营刺绣服饰与锦缎布料，东澜国特色海纹刺绣销往各界，远近闻名。'
+                                                        },
+                                                        {
+                                                            id: 30103010303,
+                                                            slug: 'ranfang',
+                                                            name: '染坊',
+                                                            description: '主营布料染色及定制花色，以海洋生物提炼的天然染料着色，颜色鲜艳持久。'
+                                                        },
+                                                        {
+                                                            id: 30103010304,
+                                                            slug: 'jinghua-ge',
+                                                            name: '镜华阁',
+                                                            description: '主营铜镜、玻璃镜及梳妆用具，汇集各地铜镜与新兴的玻璃镜，梳篦等物一应俱全。'
+                                                        },
+                                                        {
+                                                            id: 30103010305,
+                                                            slug: 'xiangfen-pu',
+                                                            name: '香粉铺',
+                                                            description: '主营香水、香粉及胭脂水粉，以海藻与花卉为原料特制香品，是雕虞街的香气来源。'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    id: 301030104,
+                                                    slug: 'bingduan-zhongduan',
+                                                    name: '【丙段·中段】',
+                                                    description: '综合商业与娱乐区（核心地带）',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 30103010401,
+                                                            slug: 'chaoyin-xilou-fenchang',
+                                                            name: '潮音戏楼（分场）',
+                                                            description: '设有小型戏台，上演说书与歌舞表演，与外城潮音戏楼同名，规模较小，票价亲民。'
+                                                        },
+                                                        {
+                                                            id: 30103010402,
+                                                            slug: 'haitu-pu',
+                                                            name: '海图铺',
+                                                            description: '售卖航海图、地图、星象图及水文记录，兼售指南针与航海仪器，是船长出海的必经之处。'
+                                                        },
+                                                        {
+                                                            id: 30103010403,
+                                                            slug: 'qihuo-zhai',
+                                                            name: '奇货斋',
+                                                            description: '售卖来历不明的异域货品，货品种类奇特，价格随心而定。疑有妖域商人暗中经营。'
+                                                        },
+                                                        {
+                                                            id: 30103010404,
+                                                            slug: 'suanming-tan',
+                                                            name: '算命摊（数处）',
+                                                            description: '提供占卜、算命、看相等服务，东澜国盛行以水纹占卜，此处聚集数位民间术士。'
+                                                        },
+                                                        {
+                                                            id: 30103010405,
+                                                            slug: 'wanpu',
+                                                            name: '玩意铺',
+                                                            description: '售卖机关玩具与童趣小物，兼售外国奇巧物件。郡主是这里的常客。'
+                                                        },
+                                                        {
+                                                            id: 30103010406,
+                                                            slug: 'shuhua-fang',
+                                                            name: '书画坊',
+                                                            description: '售卖字画、刻本及文房四宝，兼代写信件。圣女偶尔派侍女来此购买圣贤书。'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    id: 301030105,
+                                                    slug: 'dingduan-zhongnan',
+                                                    name: '【丁段·中南】',
+                                                    description: '生活用品与饮食区',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 30103010501,
+                                                            slug: 'haiwei-zhai',
+                                                            name: '海味斋',
+                                                            description: '主营海货干品、调味料及腌制食品，是东澜国特色食材集散地，常有外地商人来此批货。'
+                                                        },
+                                                        {
+                                                            id: 30103010502,
+                                                            slug: 'chaxiang-guan',
+                                                            name: '茶香馆',
+                                                            description: '主营各地茶叶、茶具及茶点，兼设雅座供人品茶，是溟都文人与商人洽谈之所。'
+                                                        },
+                                                        {
+                                                            id: 30103010503,
+                                                            slug: 'yaopu',
+                                                            name: '药铺（两家）',
+                                                            description: '主营海洋药材、外来丹药及跌打用品，以海中药材为特色，亦有少量仙门出品丹药流入。'
+                                                        },
+                                                        {
+                                                            id: 30103010504,
+                                                            slug: 'shisi',
+                                                            name: '食肆数间',
+                                                            description: '供应各类海鲜料理及东澜特色小食，以海鲜为主料，清蒸、焖炖皆有，价格适中。'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    id: 301030106,
+                                                    slug: 'wuduan-nanduan',
+                                                    name: '【戊段·南端】',
+                                                    description: '旅人服务与港口对接区',
+                                                    sub_locations: [
+                                                        {
+                                                            id: 30103010601,
+                                                            slug: 'tonghai-biaoju',
+                                                            name: '通海镖局',
+                                                            description: '主营货物押运与海上护卫，是东澜国最大的镖局，专营海路运输，以女镖师为主力。'
+                                                        },
+                                                        {
+                                                            id: 30103010602,
+                                                            slug: 'huanqian-zhuang',
+                                                            name: '换钱庄',
+                                                            description: '主营各界货币兑换及贵重物品寄存，是东澜国汇率最公道的换钱处，海商必经之地。'
+                                                        },
+                                                        {
+                                                            id: 30103010603,
+                                                            slug: 'chuanju-pu',
+                                                            name: '船具铺',
+                                                            description: '主营绳索、帆布、锚具及各类航海耗材，靠近港口区，供应出海必备物资。'
+                                                        },
+                                                        {
+                                                            id: 30103010604,
+                                                            slug: 'lvren-kezhan',
+                                                            name: '旅人客栈（小型数家）',
+                                                            description: '提供简单住宿及代寄信件服务，专为短暂停靠的商旅设立，价格低廉，位置便利。'
+                                                        },
+                                                        {
+                                                            id: 30103010605,
+                                                            slug: 'lingshou-jicunchu',
+                                                            name: '灵兽寄存处',
+                                                            description: '代为照料旅人坐骑或灵兽，兼收海上搁浅的灵兽，有专人负责照料。'
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            id: 3010302,
+                                            slug: 'chaoshi',
+                                            name: '潮市',
+                                            description: '位于外城东侧，每日寅时随潮开市，潮退则散，是溟都最大的露天市集。市集上主要售卖海货、活鱼、干货、海盐等早市货品，以当日新鲜为要。'
+                                        },
+                                        {
+                                            id: 3010303,
+                                            slug: 'zhifang-jie',
+                                            name: '织坊街',
+                                            description: '位于外城中段，靠近内城边界，街道两侧聚集了丝绸、染布、刺绣等工坊。东澜国出口量最大的纺织品产自此街，工匠以女性为主。'
+                                        },
+                                        {
+                                            id: 3010304,
+                                            slug: 'zuifan-fang',
+                                            name: '醉帆坊',
+                                            description: '位于外城西侧，靠近港口入口，食肆、酒馆、茶肆沿街连排，是出海前与归港后的必经之地，往来海员与商人最多。',
+                                            sub_locations: [
+                                                {
+                                                    id: 301030401,
+                                                    slug: 'xiangge-lou',
+                                                    name: '弦歌楼',
+                                                    description: '外城规模最大的私营客栈兼酒楼，三层，顶层可望见港口全景'
+                                                },
+                                                {
+                                                    id: 301030402,
+                                                    slug: 'haishen-miao',
+                                                    name: '海神庙',
+                                                    description: '供奉海神娘娘，渔民出海前必来上香，庙前广场是民间节庆的主会场'
+                                                },
+                                                {
+                                                    id: 301030403,
+                                                    slug: 'shuiqu-shuniu',
+                                                    name: '水渠枢纽',
+                                                    description: '外城水渠总调度处，控制城内各渠水量与流向，由水文司管辖'
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            id: 3010305,
+                                            slug: 'chenlu-jie',
+                                            name: '晨露街',
+                                            description: '位于外城南端，近城门处，街上遍布杂货铺、旧物摊、民间药铺和占卜摊，亦有来历不明的外来货物在此流通，是外城最混杂的街道。'
+                                        },
+                                        {
+                                            id: 3010306,
+                                            slug: 'jiangren-long',
+                                            name: '匠人弄',
+                                            description: '位于外城北侧，靠近水渠，街道两旁多为珠宝打磨、贝壳雕刻、小型冶炼等铺子，是雕虞街商品的主要供货来源，铺子多为女性匠人主持'
+                                        },
+                                        {
+                                            id: 3010307,
+                                            slug: 'mingdu-shuyuan',
+                                            name: '溟都书院',
+                                            description: '官办学堂，招收外城百姓子弟，以女童为优先，教授识字、水文、历史'
+                                        },
+                                        {
+                                            id: 3010308,
+                                            slug: 'mingdu-yiguan',
+                                            name: '溟都驿馆',
+                                            description: '官办接待场所，专供外国使节与商队，分甲乙丙三等，甲等设有私家渡头'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 30104,
+                                    slug: 'gangkouqu',
+                                    name: '港口区',
+                                    description: '溟都最具特色的区域，紧贴外城东南侧，直面海湾。港口区以长堤为骨架，向海延伸出数条石制栈桥，大小船只皆可停靠。这里是东澜国财富的真正来源，日夜不休，商船、渔船、官船穿梭往来，是整个人间最热闹的港口之一。',
+                                    sub_locations: [
+                                        {
+                                            id: 3010401,
+                                            slug: 'zhaohui-dagang',
+                                            name: '朝晖大港',
+                                            description: '溟都主港，停靠大型商船与官船，设有货物登记处、海关税署、引航所'
+                                        },
+                                        {
+                                            id: 3010402,
+                                            slug: 'yuren-matou',
+                                            name: '渔人码头',
+                                            description: '供本地渔船停靠，每日晨间最为热闹，鱼获直接在码头旁的潮市出售'
+                                        },
+                                        {
+                                            id: 3010403,
+                                            slug: 'guanchuan-wu',
+                                            name: '官船坞',
+                                            description: '皇室与军用船只专属停靠区，有禁军驻守，外人不得擅入'
+                                        },
+                                        {
+                                            id: 3010404,
+                                            slug: 'xiuchuan-fang',
+                                            name: '修船坊',
+                                            description: '大型修船作坊数座，承接各类船只维修与改造，匠人皆为女性主导'
+                                        },
+                                        {
+                                            id: 3010405,
+                                            slug: 'dengta',
+                                            name: '灯塔',
+                                            description: '港口最高建筑，夜间点燃指引船只，亦是东澜国的地标，塔顶设有水文观测站'
+                                        },
+                                        {
+                                            id: 3010406,
+                                            slug: 'gangkou-shiji',
+                                            name: '港口市集',
+                                            description: '港区内的综合市集，外来船只带来的异域货品在此集散，是最易见到外界人的地方'
+                                        },
+                                        {
+                                            id: 3010407,
+                                            slug: 'haiguanshu',
+                                            name: '海关署',
+                                            description: '负责进出港货物的登记、抽税与检查，由治粟内史下属官员驻守'
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 302,
+                            slug: 'chaolancheng',
+                            name: '潮澜城',
+                            location_type: 'city',
+                            description: '距溟都约半日水路，是东澜国规模最大的渔业城区。城区直面开阔海域，港口以渔船为主，岸边常年晾晒大量鱼获。城内以海货加工为核心产业，腌制、风干、熬油各类作坊气味浓郁，是溟都市集的主要货源地之一。',
+                            sub_locations: [
+                                {
+                                    id: 30201,
+                                    slug: 'yugang-jie',
+                                    name: '渔港街',
+                                    description: '沿港岸分布的原料交易街，寅时开市最旺'
+                                },
+                                {
+                                    id: 30202,
+                                    slug: 'chaolan-yugang',
+                                    name: '潮澜渔港',
+                                    description: '潮澜城最大渔港，港口以渔船为主，岸边常年晾晒大量鱼获'
+                                },
+                                {
+                                    id: 30203,
+                                    slug: 'haihuo-jiazuofang',
+                                    name: '海货加工坊',
+                                    description: '城内数十间海货加工作坊，腌制、风干、熬油各类作坊气味浓郁'
+                                },
+                                {
+                                    id: 30204,
+                                    slug: 'yumin-xinghui',
+                                    name: '渔民行会',
+                                    description: '渔民行业公会驻地，负责技艺传承与纠纷仲裁'
+                                },
+                                {
+                                    id: 30205,
+                                    slug: 'jichu-yiguan',
+                                    name: '基础医馆',
+                                    description: '为渔民提供基础医疗服务，擅长治疗外伤与风寒，收费低廉'
+                                },
+                                {
+                                    id: 30206,
+                                    slug: 'shaiwang-chang',
+                                    name: '晒网场与修网台',
+                                    description: '临海一侧建有晒网场与修网台，渔民居多，以女性户主为主'
+                                }
+                            ]
+                        },
+                        {
+                            id: 303,
+                            slug: 'jinpingcheng',
+                            name: '锦屏城',
+                            location_type: 'city',
+                            description: '位于溟都南方内陆河道旁，地势较为平坦，是东澜国最重要的纺织与手工艺产地。城区内遍布织坊与染坊，河道两岸常见彩布晾晒，颜色缤纷，是东澜国出口量最大的货品产地。',
+                            sub_locations: [
+                                {
+                                    id: 30301,
+                                    slug: 'jinshi-jie',
+                                    name: '锦市街',
+                                    description: '布料、成衣、染料的批发交易街'
+                                },
+                                {
+                                    id: 30302,
+                                    slug: 'jinping-zhizaoju',
+                                    name: '锦屏织造局',
+                                    description: '官营织造局，东澜国最大的纺织品生产基地'
+                                },
+                                {
+                                    id: 30303,
+                                    slug: 'siying-zhifang',
+                                    name: '私营织坊',
+                                    description: '城内数十间私营织坊，遍布城区各处'
+                                },
+                                {
+                                    id: 30304,
+                                    slug: 'ranliao-zuofang',
+                                    name: '染料作坊',
+                                    description: '染料制作作坊，为织坊提供各色染料'
+                                },
+                                {
+                                    id: 30305,
+                                    slug: 'cixiu-xuetang',
+                                    name: '刺绣学堂',
+                                    description: '传授刺绣技艺的学堂，培养刺绣工匠'
+                                }
+                            ]
+                        },
+                        {
+                            id: 304,
+                            slug: 'bishuicheng',
+                            name: '碧水城',
+                            location_type: 'city',
+                            description: '位于溟都西方，靠近内陆丘陵，是东澜国唯一以农业为主要产业的城区，同时也是水系修士最密集的聚居地。城区内有多处天然泉眼，水系灵力充沛，修士在此修炼事半功倍。',
+                            is_accessible: false,
+                            sub_locations: [
+                                {
+                                    id: 30401,
+                                    slug: 'quanshi-jie',
+                                    name: '泉市街',
+                                    description: '农产品、灵草、修炼材料的集散地'
+                                },
+                                {
+                                    id: 30402,
+                                    slug: 'bishui-xiulianchang',
+                                    name: '碧水修炼场',
+                                    description: '官方修炼场，水系修士在此修炼事半功倍'
+                                },
+                                {
+                                    id: 30403,
+                                    slug: 'lingquan-fang',
+                                    name: '灵泉坊',
+                                    description: '围绕天然泉眼而建的坊区，水系灵力极浓'
+                                },
+                                {
+                                    id: 30404,
+                                    slug: 'liangcang',
+                                    name: '粮仓',
+                                    description: '城区数座粮仓，储存农产品'
+                                },
+                                {
+                                    id: 30405,
+                                    slug: 'xiushi-xinghui',
+                                    name: '修士行会',
+                                    description: '修士行业公会驻地，负责修炼资源调配与纠纷仲裁'
+                                },
+                                {
+                                    id: 30406,
+                                    slug: 'qianyan-quan',
+                                    name: '千眼泉',
+                                    description: '数十处泉眼密布于一片丘地，水系灵力极浓，传说为东澜国龙脉所在'
+                                }
+                            ]
+                        },
+                        {
+                            id: 305,
+                            slug: 'wanghaicheng',
+                            name: '望海城',
+                            location_type: 'city',
+                            description: '位于东澜国最南端，与南邺国旧址隔海相望。',
+                            sub_locations: [
+                                {
+                                    id: 30501,
+                                    slug: 'junshi-jie',
+                                    name: '军市街',
+                                    description: '驻军城区外侧的补给街，肉铺、酒馆、修缮铺为主'
+                                },
+                                {
+                                    id: 30502,
+                                    slug: 'nanjing-shoubeiying',
+                                    name: '南境守备营',
+                                    description: '大幅扩编中的守备营，负责防御南方海域威胁'
+                                },
+                                {
+                                    id: 30503,
+                                    slug: 'haishang-liaowangtai',
+                                    name: '海上瞭望台',
+                                    description: '数座海上瞭望台，监视南方海域动向'
+                                },
+                                {
+                                    id: 30504,
+                                    slug: 'wuzi-chubeiku',
+                                    name: '秘密物资储备库',
+                                    description: '秘密物资储备库，储存战略物资'
+                                },
+                                {
+                                    id: 30505,
+                                    slug: 'nanwang-tai',
+                                    name: '南望台',
+                                    description: '望海城最高建筑，可遥望南邺国旧址方向，现由七星使中的一员常驻监察'
+                                }
+                            ]
+                        }
+                    ]
                 }
             ]
         },
@@ -2757,8 +4404,476 @@ const staticData = {
             slug: 'immortal',
             name: '仙门',
             realm_type: 'immortal',
-            description: '即有修仙之道，千年飞升。仙者，游于四方，秉善念而惩恶行，后设衢府于四国之外，便于管辖，旗下机构各司其职。',
+            description: '仙门以修仙为道，修行有成者千年可飞升。仙者游于四方，秉善念而惩恶行。为便于管辖，仙门于人间四国之外设立衢府，坐落于玄北国与东澜国交界海域的孤岛蓬莱仙岛之上，凌驾于各门派之上，拥有最高管辖权。',
             has_regions: true,
+            locations: [
+                {
+                    id: 3001,
+                    slug: 'penglai-xian dao',
+                    name: '蓬莱仙岛',
+                    location_type: 'island',
+                    description: '蓬莱仙岛是仙门的核心所在，四面环海，云雾常绕，自海上望去仅见隐约岛影，非持乾令者连靠近都难以做到——岛屿周边有衢府设下的法阵屏障，普通人与修为不足者会被悄无声息地引偏方向。岛上除衢府相关地点外，另设有供衢府人员常住的居住区，以及千年大比期间启用的临时访客区。',
+                    sub_locations: [
+                        {
+                            id: 300101,
+                            slug: 'zhuxian-tai',
+                            name: '诛仙台',
+                            location_type: 'landmark',
+                            description: '位于蓬莱仙岛的入岛口，是进入衢府的必经之地。诛仙台以巨石堆砌，台上陈列着累累白骨，皆为妖兽骨骸，非仙人之骨——此为衢府刻意为之，用以彰显威严、震慑来者。台身高约三丈，两侧各立一根顶端燃有蓝焰的石柱，蓝焰终年不灭，风雨不熄。'
+                        },
+                        {
+                            id: 300102,
+                            slug: 'xuanying-jie',
+                            name: '玄瀛街',
+                            location_type: 'street',
+                            description: '位于诛仙台之后、衢府正门之前的一段街道，是蓬莱仙岛唯一的商业区。玄瀛街专门贩卖各类仙门用品，来往商贩皆为持乾令的修士或衢府认证的商号，然而由于人员混杂，商品亦有真有假，有经验的修士采购前必先以法力鉴别。',
+                            sub_locations: [
+                                {
+                                    id: 30010201,
+                                    slug: 'jiaduan',
+                                    name: '【甲段】',
+                                    location_type: 'district',
+                                    description: '丹药与炼丹材料区',
+                                    sub_locations: [
+                                        {
+                                            id: 3001020101,
+                                            slug: 'danhuage',
+                                            name: '丹华阁',
+                                            location_type: 'shop',
+                                            description: '主营顶级成品丹药及名贵药材原料，为衢府认证商号，价格极高，质量有保障，大比前后最为热闹。'
+                                        },
+                                        {
+                                            id: 3001020102,
+                                            slug: 'baocaotang',
+                                            name: '百草堂',
+                                            location_type: 'shop',
+                                            description: '主营各类草药、灵植及炼丹辅材，货品真假参半，行家方可辨别，偶有稀见灵草流入。'
+                                        },
+                                        {
+                                            id: 3001020103,
+                                            slug: 'luhuofang',
+                                            name: '炉火坊',
+                                            location_type: 'shop',
+                                            description: '主营炼丹炉、丹炉零件及炼丹辅具，专供炼丹修士，品质稳定，是大比参赛者必备采购点。'
+                                        },
+                                        {
+                                            id: 3001020104,
+                                            slug: 'sandantan',
+                                            name: '散丹摊（数处）',
+                                            location_type: 'shop',
+                                            description: '售卖散装低阶丹药及入门级灵材，摊贩良莠不齐，适合刚入仙门的新人淘货，须仔细甄别。'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 30010202,
+                                    slug: 'yiduan',
+                                    name: '【乙段】',
+                                    location_type: 'district',
+                                    description: '炼器与法器区',
+                                    sub_locations: [
+                                        {
+                                            id: 3001020201,
+                                            slug: 'zhulingfang',
+                                            name: '铸灵坊',
+                                            location_type: 'shop',
+                                            description: '主营高阶法器及灵器成品，为衢府认证商号，出品精良，御桓派常在此大宗采购。'
+                                        },
+                                        {
+                                            id: 3001020202,
+                                            slug: 'hantiepu',
+                                            name: '寒铁铺',
+                                            location_type: 'shop',
+                                            description: '主营炼器原料、特殊矿石及灵金，来源复杂，部分原料来历可疑，但品质尚可。'
+                                        },
+                                        {
+                                            id: 3001020203,
+                                            slug: 'fuzhenzhai',
+                                            name: '符阵斋',
+                                            location_type: 'shop',
+                                            description: '主营各类符文、阵盘及阵旗，擅长防护与封印类符器，暗阁成员偶尔光顾。'
+                                        },
+                                        {
+                                            id: 3001020204,
+                                            slug: 'canqitan',
+                                            name: '残器摊',
+                                            location_type: 'shop',
+                                            description: '售卖残损法器并提供旧器翻新，是低价淘宝的好去处，偶有被低估的珍品流出。'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 30010203,
+                                    slug: 'bingduan',
+                                    name: '【丙段】',
+                                    location_type: 'district',
+                                    description: '功法典籍与卜策区',
+                                    sub_locations: [
+                                        {
+                                            id: 3001020301,
+                                            slug: 'yunzhangge',
+                                            name: '云章阁',
+                                            location_type: 'shop',
+                                            description: '主营功法秘籍及修炼心得手册，正版居多，但偶有伪造功法混入，购前须甄别。'
+                                        },
+                                        {
+                                            id: 3001020302,
+                                            slug: 'xingmingguan',
+                                            name: '星命馆',
+                                            location_type: 'shop',
+                                            description: '提供卜策、占卜及命数推演服务，从业者水平参差，衢府未作严格认证，信则有，不信则无。'
+                                        },
+                                        {
+                                            id: 3001020303,
+                                            slug: 'gujifang',
+                                            name: '古籍坊',
+                                            location_type: 'shop',
+                                            description: '主营上古典籍及各界历史文献，部分典籍真伪难辨，但偶有绝版珍本出现，是学者必来之处。'
+                                        },
+                                        {
+                                            id: 3001020304,
+                                            slug: 'taobenpu',
+                                            name: '拓本铺',
+                                            location_type: 'shop',
+                                            description: '提供功法拓本及图纸复制服务，合法复制，价格公道，但拓本质量因原件而异。'
+                                        }
+                                    ]
+                                },
+                                {
+                                    id: 30010204,
+                                    slug: 'dingduan',
+                                    name: '【丁段】',
+                                    location_type: 'district',
+                                    description: '驭兽与杂货区',
+                                    sub_locations: [
+                                        {
+                                            id: 3001020401,
+                                            slug: 'shoujiantang',
+                                            name: '兽鉴堂',
+                                            location_type: 'shop',
+                                            description: '提供灵兽鉴定、契约引导服务，并售卖幼兽，为衢府认证商号，专为驭兽修士服务，大比驭兽项目参赛者常来。'
+                                        },
+                                        {
+                                            id: 3001020402,
+                                            slug: 'linger-pu',
+                                            name: '灵饵铺',
+                                            location_type: 'shop',
+                                            description: '主营各类灵兽饵料及驯兽辅材，溟安门弟子是这里的大客户。'
+                                        },
+                                        {
+                                            id: 3001020403,
+                                            slug: 'zahuo-zhai',
+                                            name: '杂货斋',
+                                            location_type: 'shop',
+                                            description: '主营修士日常所需杂货及储物法器，以功能性商品为主，价格亲民，是来往修士补给的必经之处。'
+                                        },
+                                        {
+                                            id: 3001020404,
+                                            slug: 'qihuotan',
+                                            name: '奇货摊（数处）',
+                                            location_type: 'shop',
+                                            description: '售卖来历不明的奇珍异货，无衢府认证，真假难辨，有时能淘到惊喜，有时血本无归。'
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 300103,
+                            slug: 'qufu',
+                            name: '衢府',
+                            location_type: 'palace',
+                            description: '衢府正殿坐落于蓬莱仙岛最高处，以白玉石与云纹铁为主要建材，殿前广场宽阔，可容纳大比期间数百修士同场比试。衢府建筑群以正殿为核心向外延伸，各司其职的机构分设于周边，整体庄严肃穆，是仙门最具权威感的建筑群。',
+                            sub_locations: [
+                                {
+                                    id: 30010301,
+                                    slug: 'qufu-zhengdian',
+                                    name: '衢府正殿',
+                                    location_type: 'hall',
+                                    description: '府君处理仙门事务之所，召见门派宗主、颁布仙门律令皆于此处，非受召者不得擅入'
+                                },
+                                {
+                                    id: 30010302,
+                                    slug: 'cangbaoge',
+                                    name: '藏宝阁',
+                                    location_type: 'treasury',
+                                    description: '衢府奇珍异宝存放之所，由护宝负责看守，法阵封护，等级森严'
+                                },
+                                {
+                                    id: 30010303,
+                                    slug: 'yisi-shenhe ting',
+                                    name: '沂司审核厅',
+                                    location_type: 'hall',
+                                    description: '沂司负责审核入衢府者资质之所，呈报结果后决定留任或逐出'
+                                },
+                                {
+                                    id: 30010304,
+                                    slug: 'zhujun-yishiting',
+                                    name: '主君议事厅',
+                                    location_type: 'hall',
+                                    description: '主君协助府君处理日常事务之所，实际行政运转核心'
+                                },
+                                {
+                                    id: 30010305,
+                                    slug: 'qianlingsi',
+                                    name: '乾令司',
+                                    location_type: 'hall',
+                                    description: '负责每年乾令数量核定与分发，矍徕出行前后在此汇报所见人才情况'
+                                },
+                                {
+                                    id: 30010306,
+                                    slug: 'lianluoshu',
+                                    name: '联络署',
+                                    location_type: 'hall',
+                                    description: '鼎羽（玄北）、鹳甄（东澜）、丘谒（西刹）、枢谌（修仙世家）各自办公之所'
+                                }
+                            ]
+                        },
+                        {
+                            id: 300104,
+                            slug: 'shangque',
+                            name: '商榷',
+                            location_type: 'building',
+                            description: '商榷是衢府直辖的拍卖行，位于玄瀛街末端、衢府正门侧翼，以独立建筑形式存在。商榷百年一开，持乾令者可携带一位无乾令者进入，规则严格。进入商榷后，所有人须佩戴面具，以防因财货争抢引发冲突，亦保护买家身份不被泄露。'
+                        },
+
+                        {
+                            id: 300106,
+                            slug: 'qiongtai-ju',
+                            name: '琼台居',
+                            location_type: 'residence',
+                            description: '琼台居位于衢府建筑群后方，是蓬莱仙岛上唯一的常驻居住区，专供衢府及其下属机构的在岛人员居住。建筑以白石与灵木为主，风格素雅，各建筑之间以石径相连，种有常绿仙草，四季如一。琼台居与岛上其他区域以月洞门相隔，闲杂人等不得入内。'
+                        },
+                        {
+                            id: 300107,
+                            slug: 'yunjifang',
+                            name: '云集坊',
+                            location_type: 'building',
+                            description: '云集坊并非常设建筑，而是千年大比期间由衢府以阵法快速搭建的临时居住区，位于玄瀛街与诛仙台之间的开阔地带。大比结束后，云集坊的建筑会随阵法撤除而消失，来年无痕迹可寻。'
+                        }
+                    ]
+                },
+                {
+                    id: 3002,
+                    slug: 'langque',
+                    name: '阆阙',
+                    location_type: 'sect',
+                    description: '阆阙是由除灵师自发形成的协会，有「除灵师庇护所」之称，不受任何门派及衢府的管辖。阆阙总部位于东澜国境内，通过接受各类委托挣取修炼资源，委托按难度分为绿阶、蓝阶、紫阶和橙阶。阆阙高层皆为顶尖人才，拥有开创立派之能，是衢府一心拉拢却始终未能成功的独立势力。',
+                    sub_locations: [
+                        {
+                            id: 300201,
+                            slug: 'weituo-dating',
+                            name: '委托大厅',
+                            location_type: 'hall',
+                            description: '阆阙对外接洽的核心场所，各阶委托在此公示，成员自行接取或由执迭统筹分配'
+                        },
+                        {
+                            id: 300202,
+                            slug: 'zhdie-pingjishi',
+                            name: '执迭评级室',
+                            location_type: 'hall',
+                            description: '执迭负责评定成员等级与任务等级之所，结果直接影响成员的资源分配'
+                        },
+                        {
+                            id: 300203,
+                            slug: 'kuiyun-qingbaoshi',
+                            name: '窥云情报室',
+                            location_type: 'hall',
+                            description: '情报按等级封存，非相应级别人员不得查阅，窥云在此统辖全协会情报网络'
+                        },
+                        {
+                            id: 300204,
+                            slug: 'gelinggen-xunlianqu',
+                            name: '各灵根训练区',
+                            location_type: 'zone',
+                            description: '各灵根均有独立训练区，统领在此管辖本系成员'
+                        },
+                        {
+                            id: 300205,
+                            slug: 'quezhu-yishiting',
+                            name: '阙主议事厅',
+                            location_type: 'hall',
+                            description: '阙主与副阙主处理协会重大决策之所，非核心成员不得入内'
+                        },
+                        {
+                            id: 300206,
+                            slug: 'danganku',
+                            name: '档案库',
+                            location_type: 'hall',
+                            description: '所有已完成委托的记录、成员等级变动记录均存档于此，窥云兼管'
+                        }
+                    ]
+                },
+                {
+                    id: 3003,
+                    slug: 'ange',
+                    name: '暗阁',
+                    location_type: 'sect',
+                    description: '暗阁：草蛇灰线，千里追踪，如蛁附骨，如影随形。无人知晓其确切来历，亦无人知晓其总部所在。据传内部分天地玄黄四个阶位，每阶再分甲乙丙丁四等，共十六级，由低至高层层晋升。暗阁接受各界委托，不问委托者身份，不问目标来历，只论酬劳与可行性。',
+                    sub_locations: [
+                        {
+                            id: 300301,
+                            slug: 'tianlu',
+                            name: '天路',
+                            location_type: 'zone',
+                            description: '天路是暗阁设于蓬莱仙岛边缘的核心历练之所，与岛上其他区域有明显的地势分隔，以密林、险崖、雾障与衢府建筑群相隔开来。天路内部密林重重，各种野兽毒虫肆虐，地形诡异多变，进入者九死一生。天路的入口与出口由暗阁阁主亲自掌管，衢府曾派人前往至今无人活着归来，是整座蓬莱仙岛上唯一不受衢府直接管辖的禁区。'
+                        },
+                        {
+                            id: 300302,
+                            slug: 'gezhudian',
+                            name: '阁主殿',
+                            location_type: 'hall',
+                            description: '阁主殿是暗阁权力最核心的场所，阁主在此接见长老、发布重要指令、处置内部要务。整体风格素净却不简陋，陈设精致，处处可见毒草与奇花交错种植于角落——那是阁主的习惯，也是对来访者无声的警示。',
+                            sub_locations: [
+                                {
+                                    id: 30030201,
+                                    slug: 'zhuting',
+                                    name: '主厅',
+                                    location_type: 'hall',
+                                    description: '阁主接见长老与核心成员之所，设有主位与侧座，阁主从不坐于正中，而是偏侧而坐，以示「随意」'
+                                },
+                                {
+                                    id: 30030202,
+                                    slug: 'mishi',
+                                    name: '密室',
+                                    location_type: 'hall',
+                                    description: '阁主处理最机密事务之所，仅阁主本人可进入，据说内有前任阁主留下的未竟之事记录'
+                                },
+                                {
+                                    id: 30030203,
+                                    slug: 'ducaoyuan',
+                                    name: '毒草园',
+                                    location_type: 'garden',
+                                    description: '阁主殿内附设，种植各类剧毒植物，阁主亲自打理，长老们进入时皆会下意识屏气'
+                                },
+                                {
+                                    id: 30030204,
+                                    slug: 'cexiang',
+                                    name: '侧厢',
+                                    location_type: 'room',
+                                    description: '阁主休憩之所，极少有人见过其内部陈设，花弄影是唯一偶尔被允许进入的人'
+                                }
+                            ]
+                        },
+                        {
+                            id: 300303,
+                            slug: 'zhanglao-yishiting',
+                            name: '长老议事厅',
+                            location_type: 'hall',
+                            description: '长老议事厅是暗阁日常运转最重要的会议场所，阁主与三位长老每月定期于此碰面，汇报各自负责的事务。厅内设有四席，格局简洁，无多余陈设，只有一盏长明灯悬于正中。'
+                        },
+                        {
+                            id: 300304,
+                            slug: 'xinren-shoulianchang',
+                            name: '新人试炼场',
+                            location_type: 'zone',
+                            description: '所有进入暗阁的新人，无论来历，皆须先通过新人试炼场的基础考核，方可获得黄丁级别编制。试炼场并非固定场地，而是由花弄影根据当期新人情况临时设定场景，每一批新人面对的内容皆不相同。'
+                        },
+                        {
+                            id: 300305,
+                            slug: 'gongfa-xiulianqu',
+                            name: '功法修炼区',
+                            location_type: 'zone',
+                            description: '功法修炼区按阶位划分为独立区域，黄阶成员共用大区，玄阶成员有单独格间，地阶以上成员拥有私人修炼室。各区域之间有隔音与隔感知法阵，互不干扰，亦无法窥探他人修炼内容。',
+                            sub_locations: [
+                                {
+                                    id: 30030501,
+                                    slug: 'huángjiēqū',
+                                    name: '黄阶区',
+                                    location_type: 'zone',
+                                    description: '大型公共修炼区，设有基础训练器械与功法石碑，由花弄影定期检查修炼进度'
+                                },
+                                {
+                                    id: 30030502,
+                                    slug: 'xuánjiēgéjiān',
+                                    name: '玄阶格间',
+                                    location_type: 'room',
+                                    description: '半私人格间，有独立门扉，成员可申请特定时段独占使用'
+                                },
+                                {
+                                    id: 30030503,
+                                    slug: 'dìjiēxiūliànshì',
+                                    name: '地阶修炼室',
+                                    location_type: 'room',
+                                    description: '私人修炼室，面积较大，可放置个人专属器械与功法材料'
+                                },
+                                {
+                                    id: 30030504,
+                                    slug: 'tiānjiēzhuānqū',
+                                    name: '天阶专区',
+                                    location_type: 'zone',
+                                    description: '仅阁主与长老级别使用，外人无从知晓内部配置'
+                                },
+                                {
+                                    id: 30030505,
+                                    slug: 'duìliàntái',
+                                    name: '对练台',
+                                    location_type: 'platform',
+                                    description: '中段设有「对练台」，成员可在此申请受监督的对练，结果记入档案'
+                                }
+                            ]
+                        },
+                        {
+                            id: 300306,
+                            slug: 'yirong-xishi',
+                            name: '易容习艺室',
+                            location_type: 'hall',
+                            description: '暗阁几乎所有成员都需要掌握基础的易容与变声技巧，易容习艺室是专项训练此类技艺的场所。室内备有大量面具、假发、染料、声线改变药剂，以及各类人物身份档案供成员研习模仿。阁主本人极擅易容，据说他偶尔会伪装成普通成员出现在习艺室内观察，但没有人知道哪一次是真的。',
+                            sub_locations: [
+                                {
+                                    id: 30030601,
+                                    slug: 'cáiliàokù',
+                                    name: '材料库',
+                                    location_type: 'warehouse',
+                                    description: '各类易容材料，人皮面具、特殊药剂，由专人管理，领取须登记，阁主级别可不登记'
+                                },
+                                {
+                                    id: 30030602,
+                                    slug: 'dǎngànkù',
+                                    name: '档案库',
+                                    location_type: 'archive',
+                                    description: '各界人物外貌与声纹资料，供成员研习，蓑衣客的情报网是主要更新来源'
+                                }
+                            ]
+                        },
+                        {
+                            id: 300307,
+                            slug: 'dushu-yanxis',
+                            name: '毒术研习室',
+                            location_type: 'hall',
+                            description: '毒术是暗阁的核心竞争力之一，研习室内常年有刺鼻气味，门扉以特殊材质隔绝气息外泄。花弄影身中奇毒、常年寻求解药一事，使她对毒术研究有着旁人无法比拟的驱动力，研习室的大量成果实为她半强迫自己研究的产物。'
+                        },
+                        {
+                            id: 300308,
+                            slug: 'suoyike-diaotai',
+                            name: '蓑衣客钓台',
+                            location_type: 'platform',
+                            description: '蓑衣客从不在固定的办公室内处理情报，而是习惯于月夜在一处临水钓台垂钓，人称「蓑衣客」便由此而来。一处临水的木制钓台，陈设简朴，蓑衣与斗笠随手搭在栏杆上，看上去不过是普通的垂钓之所。'
+                        },
+                        {
+                            id: 300309,
+                            slug: 'yunpoyue-waijiaoshi',
+                            name: '云破月外交室',
+                            location_type: 'hall',
+                            description: '云破月负责暗阁的对外交涉，外交室是她接待各界来访者、谈判委托条件的专属场所。室内陈设精致温和，与暗阁其他地方的压抑气氛截然不同——这是刻意为之的，云破月深知让对方放松戒备的价值。'
+                        },
+                        {
+                            id: 300310,
+                            slug: 'ándàngshì',
+                            name: '暗档室',
+                            location_type: 'archive',
+                            description: '暗档室是暗阁的机密核心之一，存放着每一位现役与已故成员的完整档案，以及历年所有任务的记录。档案以特殊封印封存，仅阁主与蓑衣客持有解封权限。室内常年黑暗，以法力灯照明，不允许任何形式的复制。'
+                        },
+                        {
+                            id: 300311,
+                            slug: 'yōuyù',
+                            name: '幽狱',
+                            location_type: 'prison',
+                            description: '幽狱是暗阁关押违规成员与待处置对象的场所，鲜少启用，但每次启用都代表着极为严重的事态。幽狱的存在在暗阁内部是公开的秘密，但没有人知道它确切在哪里，只知道进去的人很少能以正常状态出来。'
+                        }
+                    ]
+                }
+            ],
             regions: [
                 {
                     id: 31,
