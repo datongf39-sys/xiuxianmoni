@@ -25,6 +25,7 @@
         </div>
         <div class="header-buttons" id="headerButtons">
             <button class="header-btn" onclick="createNewCharacter()">新角色</button>
+            <button class="header-btn" onclick="openSocialCircle()">社交</button>
             <button class="header-btn" onclick="openSettings()">设置</button>
         </div>
     </div>
@@ -339,12 +340,47 @@
         </div>
     </div>
 
+    <!-- 偶遇NPC弹窗 -->
+    <div class="modal-overlay" id="encounterModal" style="display: none;">
+        <div class="modal-content">
+            <h3 id="encounterTitle">萍水相逢</h3>
+            <p id="encounterText">你似乎遇到了一位有趣的人，是否要将其记下？</p>
+            <div class="modal-actions">
+                <button class="modal-btn" onclick="handleEncounter(false)">置之不理</button>
+                <button class="modal-btn primary" onclick="handleEncounter(true)">记下此人</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 社交圈界面 -->
+    <div id="socialCircleModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="width: 80%; max-width: 900px;">
+            <button class="settings-close-btn" onclick="closeSocialCircle()" title="关闭">×</button>
+            <h2>社交圈</h2>
+            <div id="socialCircleContent" class="social-circle-content">
+                <!-- NPC列表将动态生成在这里 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- NPC详情页 -->
+    <div id="npcDetailModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content" style="width: 70%; max-width: 800px;">
+            <button class="settings-close-btn" onclick="closeNpcDetail()" title="关闭">×</button>
+            <div id="npcDetailContent">
+                <!-- NPC详情将动态生成在这里 -->
+            </div>
+        </div>
+    </div>
+
+
     <!-- 引入前端服务 -->
     <script src="./js/app.bundle.js"></script>
     <script>
         // 全局变量
         let currentOptions = [];
         let isInitialized = false;
+        let currentEncounterNPC = null; // 用于暂存偶遇的NPC
 
         // 初始化应用
         async function initApp() {
@@ -815,6 +851,45 @@
                 console.error('获取角色列表失败:', error);
                 return [];
             }
+        }
+
+        // 显示偶遇NPC弹窗
+        function showEncounterModal(npc) {
+            currentEncounterNPC = npc;
+            const modal = document.getElementById('encounterModal');
+            const title = document.getElementById('encounterTitle');
+            const text = document.getElementById('encounterText');
+
+            title.textContent = `萍水相逢: ${npc.name}`;
+            text.innerHTML = `你似乎遇到了一位有趣的人物，<br>其名为 <strong>${npc.name}</strong>，看起来是 ${npc.sect} 的人。<br>是否要将其记下，以便日后往来？`;
+            
+            modal.style.display = 'flex';
+        }
+
+        // 处理偶遇NPC的选择
+        async function handleEncounter(shouldAdd) {
+            const modal = document.getElementById('encounterModal');
+            modal.style.display = 'none';
+
+            if (shouldAdd && currentEncounterNPC) {
+                try {
+                    const character = await app.getCurrentCharacter();
+                    if (character) {
+                        await app.storageService.updateNPCRelation(character.id, currentEncounterNPC.id, {
+                            npc_name: currentEncounterNPC.name,
+                            status: 'known',
+                            affection: 0,
+                            first_met_location: app.gameProgress.current_location,
+                            first_met_day: app.gameProgress.game_days
+                        });
+                        console.log(`已将 ${currentEncounterNPC.name} 加入社交圈`);
+                        // 可选：显示一个短暂的成功提示
+                    }
+                } catch (error) {
+                    console.error('添加NPC到社交圈失败:', error);
+                }
+            }
+            currentEncounterNPC = null;
         }
 
         // 页面加载完成后
@@ -2374,12 +2449,21 @@
             nanya: "南邺",
             // 地点类型
             sect: "门派",
+            sect_group: "门派群",
+            island: "岛屿",
             town: "城镇",
             village: "村落",
             wilderness: "荒野",
             mountain: "山脉",
             river: "河流",
             forest: "森林",
+            street: "街道",
+            district: "区域",
+            zone: "区域",
+            palace: "宫殿",
+            landmark: "地标",
+            country: "国家",
+            city: "城市",
             // 建筑类型
             building: "建筑",
             hall: "殿堂",
@@ -2394,7 +2478,12 @@
             training: "修炼场",
             residence: "居所",
             alchemy: "炼丹房",
-            forge: "锻造坊"
+            forge: "锻造坊",
+            shop: "商铺",
+            treasury: "宝库",
+            archive: "档案室",
+            prison: "监狱",
+            warehouse: "仓库"
         };
 
         // 地图数据获取函数
@@ -2442,15 +2531,19 @@
                             // 检查 location.sub_locations（包括嵌套的）
                             for (const loc of realm.locations) {
                                 if (loc.sub_locations) {
+                                    console.log('Checking location:', loc.name, 'sub_locations ids:', loc.sub_locations.map(s => s.id));
                                     const subLoc = loc.sub_locations.find(l => l.id == locationId);
                                     if (subLoc) {
+                                        console.log('Found first-level subLoc:', subLoc.name, 'parent:', loc.name);
                                         return { ...subLoc, realm_name: realm.name, realm_id: realm.id, location_name: loc.name, location_id: loc.id };
                                     }
                                     // 检查嵌套的 sub_locations（第三级）
                                     for (const sub of loc.sub_locations) {
                                         if (sub.sub_locations) {
+                                            console.log('Checking sub_location:', sub.name, 'id:', sub.id, 'has sub_locations:', sub.sub_locations.map(s => s.id));
                                             const nestedSub = sub.sub_locations.find(l => l.id == locationId);
                                             if (nestedSub) {
+                                                console.log('Found nested sub_location:', nestedSub.name, 'parent:', sub.name, 'grandparent:', loc.name);
                                                 return { ...nestedSub, realm_name: realm.name, realm_id: realm.id, location_name: loc.name, location_id: loc.id, sub_location_name: sub.name, sub_location_id: sub.id };
                                             }
                                             // 检查第四级嵌套
@@ -2641,8 +2734,14 @@
 
             // 如果有区域，显示区域；否则显示地点
             if (realm.has_regions && realm.regions && realm.regions.length > 0) {
-                renderMapGrid(realm.regions);
                 setMapLayerHeader('realm');
+                // 仙门特殊处理：先显示locations（蓬莱仙岛、阆阙、暗阁），再显示regions（门派）
+                if (realm.id === 3 && realm.locations && realm.locations.length > 0) {
+                    const grid = document.getElementById("map-node-grid");
+                    grid.innerHTML = realm.locations.map(l => mapNodeCard(l)).join("") + realm.regions.map(r => mapNodeCard(r)).join("");
+                } else {
+                    renderMapGrid(realm.regions);
+                }
             } else {
                 renderMapGrid(realm.locations);
                 setMapLayerHeader('realm');
@@ -2720,7 +2819,8 @@
             mapState.buildingId = null;
             mapState.selectedNode = null;
 
-            console.log('loadMapLocation:', location.name, 'isSubLocation:', isSubLocation, 'isNested:', isNestedSubLocation, 'isDeep:', isDeeplyNested, 'subNodes:', location.sub_locations);
+            console.log('loadMapLocation:', location.name, 'location_id:', location.location_id, 'sub_location_id:', location.sub_location_id, 'nested_location_id:', location.nested_location_id);
+            console.log('loadMapLocation names:', location.location_name, location.sub_location_name, location.nested_location_name);
 
             // 支持 sub_locations 或 buildings
             const subNodes = location.sub_locations || location.buildings;
@@ -2730,45 +2830,46 @@
             }
 
             // 更新面包屑
+            const breadcrumbItems = [{ name: '六界', level: 'world' }];
+            
+            // 添加realm层级
+            if (location.realm_name) {
+                breadcrumbItems.push({ name: location.realm_name, level: 'realm', id: mapState.realmId });
+            }
+            
+            // 添加region层级（如果有）
+            if (location.region_name) {
+                breadcrumbItems.push({ name: location.region_name, level: 'region', id: mapState.regionId });
+            }
+            
             if (isDeeplyNested) {
-                // 第七层：深度嵌套的 sub_location（如苍斛街的分段）
-                updateMapBreadcrumb([
-                    { name: '六界', level: 'world' },
-                    { name: location.realm_name || '人间', level: 'realm', id: mapState.realmId },
-                    { name: location.region_name || mapState.regionId, level: 'region', id: mapState.regionId },
+                // 第七层：深度嵌套的 sub_location
+                breadcrumbItems.push(
                     { name: location.location_name, level: 'location', id: parentLocationId },
                     { name: location.sub_location_name, level: 'location', id: parentSubLocationId },
                     { name: location.nested_location_name, level: 'location', id: parentNestedId },
                     { name: locationName || location.name, level: 'building', id: locationId }
-                ]);
+                );
             } else if (isNestedSubLocation) {
                 // 第六层：嵌套的 sub_location
-                updateMapBreadcrumb([
-                    { name: '六界', level: 'world' },
-                    { name: location.realm_name || '人间', level: 'realm', id: mapState.realmId },
-                    { name: location.region_name || mapState.regionId, level: 'region', id: mapState.regionId },
+                console.log('Nested sub_location breadcrumb:', location.location_name, location.sub_location_name, location.name);
+                breadcrumbItems.push(
                     { name: location.location_name, level: 'location', id: parentLocationId },
                     { name: location.sub_location_name, level: 'location', id: parentSubLocationId },
                     { name: locationName || location.name, level: 'building', id: locationId }
-                ]);
+                );
             } else if (isSubLocation) {
                 // 第五层：sub_location
-                updateMapBreadcrumb([
-                    { name: '六界', level: 'world' },
-                    { name: location.realm_name || '人间', level: 'realm', id: mapState.realmId },
-                    { name: location.region_name || mapState.regionId, level: 'region', id: mapState.regionId },
+                breadcrumbItems.push(
                     { name: location.location_name, level: 'location', id: parentLocationId },
                     { name: locationName || location.name, level: 'building', id: locationId }
-                ]);
+                );
             } else {
                 // 第四层：location
-                updateMapBreadcrumb([
-                    { name: '六界', level: 'world' },
-                    { name: location.realm_name || '人间', level: 'realm', id: mapState.realmId },
-                    { name: location.region_name || mapState.regionId, level: 'region', id: mapState.regionId },
-                    { name: locationName || location.name, level: 'location', id: locationId }
-                ]);
+                breadcrumbItems.push({ name: locationName || location.name, level: 'location', id: locationId });
             }
+            
+            updateMapBreadcrumb(breadcrumbItems);
 
             showMapDetail(location, location);
         }
@@ -2802,13 +2903,18 @@
             setMapLayerHeader('building');
 
             // 更新面包屑
-            updateMapBreadcrumb([
-                { name: '六界', level: 'world' },
-                { name: building.realm_name || '人间', level: 'realm', id: mapState.realmId },
-                { name: building.region_name || mapState.regionId, level: 'region', id: mapState.regionId },
-                { name: building.location_name || mapState.locationId, level: 'location', id: mapState.locationId },
-                { name: buildingName, level: 'building', id: buildingId }
-            ]);
+            const breadcrumbItems = [{ name: '六界', level: 'world' }];
+            if (building.realm_name) {
+                breadcrumbItems.push({ name: building.realm_name, level: 'realm', id: mapState.realmId });
+            }
+            if (building.region_name) {
+                breadcrumbItems.push({ name: building.region_name, level: 'region', id: mapState.regionId });
+            }
+            if (building.location_name) {
+                breadcrumbItems.push({ name: building.location_name, level: 'location', id: mapState.locationId });
+            }
+            breadcrumbItems.push({ name: buildingName, level: 'building', id: buildingId });
+            updateMapBreadcrumb(breadcrumbItems);
 
             showMapDetail(building, building);
         }
@@ -2892,14 +2998,19 @@
                     loadMapRealm(node.slug || node.id, node.name);
                     break;
                 case 'region':
+                case 'sect_group':
                     loadMapRegion(node.id, node.name);
                     break;
                 case 'location':
                 case 'sect':
+                case 'island':
                 case 'town':
                 case 'village':
                 case 'city':
                 case 'palace':
+                case 'street':
+                case 'zone':
+                case 'landmark':
                     console.log('enterMapNode: calling loadMapLocation for', node.name, 'id:', node.id);
                     loadMapLocation(node.id, node.name);
                     break;
@@ -2910,7 +3021,19 @@
                 case 'cave':
                 case 'platform':
                 case 'pavilion':
+                case 'room':
+                case 'garden':
+                case 'library':
+                case 'shop':
+                case 'treasury':
+                case 'archive':
+                case 'prison':
+                case 'warehouse':
                     loadMapBuilding(node.id, node.name);
+                    break;
+                case 'district':
+                    console.log('enterMapNode: calling loadMapLocation for district', node.name, 'id:', node.id);
+                    loadMapLocation(node.id, node.name);
                     break;
             }
         }
@@ -3627,7 +3750,206 @@
                 if (elements.charIdentityDisplay) elements.charIdentityDisplay.textContent = character.identity || '修仙者';
             }
         }
+                                function openSocialCircle() {
+                    const modal = document.getElementById('socialCircleModal');
+                    modal.style.display = 'flex';
+                    // 在这里加载社交圈数据
+                    loadSocialCircleData();
+                }
+
+                // 关闭社交圈
+                function closeSocialCircle() {
+                    const modal = document.getElementById('socialCircleModal');
+                    modal.style.display = 'none';
+                }
+
+                // 加载并显示社交圈数据
+                async function loadSocialCircleData() {
+                    const content = document.getElementById('socialCircleContent');
+                    content.innerHTML = '<p>加载中...</p>';
+
+                    try {
+                        const character = await app.getCurrentCharacter();
+                        if (!character) {
+                            content.innerHTML = '<p>无法加载社交数据，请先创建角色。</p>';
+                            return;
+                        }
+
+                        const relations = await app.storageService.getSocialCircle(character.id);
+                        if (!relations || relations.length === 0) {
+                            content.innerHTML = '<p>你的社交圈一片空白，快去结识新朋友吧。</p>';
+                            return;
+                        }
+
+                        // 按好感度降序排序
+                        relations.sort((a, b) => b.affection - a.affection);
+
+                        // 分组
+                        const groups = {
+                            contacted: relations.filter(r => r.status === 'contacted'),
+                            known: relations.filter(r => r.status === 'known'),
+                            unknown: relations.filter(r => r.status === 'unknown'),
+                        };
+
+                        let html = '';
+
+                        // 渲染有联系的人
+                        if (groups.contacted.length > 0) {
+                            html += '<div class="social-group">';
+                            html += '<h3 class="social-group-title">已建立联系</h3>';
+                            html += '<div class="npc-card-list">';
+                            groups.contacted.forEach(npc => {
+                                html += createNpcCard(npc);
+                            });
+                            html += '</div></div>';
+                        }
+
+                        // 渲染认识的人
+                        if (groups.known.length > 0) {
+                            html += '<div class="social-group">';
+                            html += '<h3 class="social-group-title">萍水相逢</h3>';
+                            html += '<div class="npc-card-list">';
+                            groups.known.forEach(npc => {
+                                html += createNpcCard(npc);
+                            });
+                            html += '</div></div>';
+                        }
+                        
+                        content.innerHTML = html;
+
+                        // 4. 渲染关系列表
+                        const relationsList = document.getElementById('npc-relations-list');
+                        if (npcStaticData.relationship) {
+                            const relations = npcStaticData.relationship.split('，').map(r => r.trim());
+                            let relationsHtml = '<ul>';
+                            relations.forEach(relation => {
+                                const parts = relation.split('：');
+                                if (parts.length === 2) {
+                                    relationsHtml += `<li><strong>${parts[0]}:</strong> ${parts[1]}</li>`;
+                                }
+                            });
+                            relationsHtml += '</ul>';
+                            relationsList.innerHTML = relationsHtml;
+                        } else {
+                            relationsList.innerHTML = '<p>暂无</p>';
+                        }
+
+
+                    } catch (error) {
+                        console.error('加载社交圈数据失败:', error);
+                        content.innerHTML = '<p>加载社交圈数据时出错，请稍后再试。</p>';
+                    }
+                }
+
+                function getAffectionLevel(affection) {
+                    if (affection >= 85) return { text: '亲密', color: '#ff69b4' };
+                    if (affection >= 60) return { text: '熟悉', color: '#1e90ff' };
+                    if (affection >= 30) return { text: '友好', color: '#32cd32' };
+                    if (affection >= 10) return { text: '一般', color: '#9acd32' };
+                    if (affection > -10) return { text: '陌生', color: '#d3d3d3' };
+                    if (affection > -50) return { text: '厌恶', color: '#ffa500' };
+                    return { text: '敌对', color: '#dc143c' };
+                }
+
+                function createNpcCard(npc) {
+                    const affectionLevel = getAffectionLevel(npc.affection);
+                    const affectionPercentage = (npc.affection + 100) / 2;
+
+                    return `
+                        <div class="npc-card" onclick="openNpcDetail(${npc.npc_id})">
+                            <h4>${npc.npc_name}</h4>
+                            <p>状态: ${npc.status === 'contacted' ? '已联系' : '认识'}</p>
+                            <p>好感度: ${npc.affection} (${affectionLevel.text})</p>
+                            <div class="affection-bar">
+                                <div class="affection-level ${npc.affection < 0 ? 'negative' : ''}" 
+                                     style="width: ${affectionPercentage}%; background-color: ${affectionLevel.color};"></div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                                async function openNpcDetail(npcId) {
+                    const modal = document.getElementById('npcDetailModal');
+                    const content = document.getElementById('npcDetailContent');
+                    content.innerHTML = '<p>加载中...</p>';
+                    modal.style.display = 'flex';
+
+                    try {
+                        const character = await app.getCurrentCharacter();
+                        if (!character) {
+                            content.innerHTML = '<p>无法加载NPC数据，请先创建角色。</p>';
+                            return;
+                        }
+
+                        // 1. 获取NPC的静态数据
+                        const staticData = window.gameApp.getStaticData();
+                        const npcStaticData = (staticData.npcs || []).find(n => n.id === npcId);
+
+                        // 2. 获取NPC的动态关系数据
+                        const npcRelationData = await app.storageService.getNPCRelation(character.id, npcId);
+
+                        if (!npcStaticData || !npcRelationData) {
+                            content.innerHTML = '<p>找不到该NPC的信息。</p>';
+                            return;
+                        }
+
+                        // 3. 生成HTML
+                        const affectionLevel = getAffectionLevel(npcRelationData.affection);
+                        let html = `
+                            <div class="npc-detail-header">
+                                <div class="npc-avatar">${npcStaticData.name.charAt(0)}</div>
+                                <div class="npc-title">
+                                    <h2>${npcStaticData.name} ${npcStaticData.zi ? `(字: ${npcStaticData.zi})` : ''}</h2>
+                                    <p>${npcStaticData.sect} · ${npcStaticData.title}</p>
+                                </div>
+                            </div>
+                            <div class="npc-detail-body">
+                                <div class="npc-detail-section">
+                                    <h4>基本信息</h4>
+                                    <p><strong>性格:</strong> ${npcStaticData.personality}</p>
+                                    <p><strong>专长:</strong> ${npcStaticData.speciality || '无'}</p>
+                                    <p><strong>初遇地点:</strong> ${npcRelationData.first_met_location || '未知'}</p>
+                                    <p><strong>初遇时间:</strong> 第 ${npcRelationData.first_met_day || '??'} 天</p>
+                                </div>
+                                <div class="npc-detail-section">
+                                    <h4>与你的关系</h4>
+                                    <p><strong>好感度:</strong> ${npcRelationData.affection} (${affectionLevel.text})</p>
+                                    <div class="affection-bar">
+                                        <div class="affection-level ${npcRelationData.affection < 0 ? 'negative' : ''}" 
+                                             style="width: ${(npcRelationData.affection + 100) / 2}%; background-color: ${affectionLevel.color};"></div>
+                                    </div>
+                                    <p><strong>状态:</strong> ${npcRelationData.status === 'contacted' ? '已联系' : '认识'}</p>
+                                </div>
+                                <div class="npc-detail-section">
+                                    <h4>性格标签</h4>
+                                    <ul>
+                                        ${(npcStaticData.tags && npcStaticData.tags.length > 0) ? npcStaticData.tags.map(tag => `<li>${tag}</li>`).join('') : '<li>无</li>'}
+                                    </ul>
+                                </div>
+                                <div class="npc-detail-section">
+                                    <h4>人际关系</h4>
+                                    <div id="npc-relations-list"></div>
+                                </div>
+                            </div>
+                        `;
+
+                        content.innerHTML = html;
+
+                    } catch (error) {
+                        console.error('加载NPC详情失败:', error);
+                        content.innerHTML = '<p>加载NPC详情时出错。</p>';
+                    }
+                }
+
+                function closeNpcDetail() {
+                    const modal = document.getElementById('npcDetailModal');
+                    modal.style.display = 'none';
+                }
+
+
+
     </script>
+
 
     <!-- 角色创建模态框 -->
     <div class="character-creation-overlay" id="characterCreationModal">
